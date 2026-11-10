@@ -67,7 +67,7 @@ try {
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   const $ = id => page.locator('#' + id);
-  await page.goto(base);
+  await page.goto(base + '/classic');
 
   async function upload(name) {
     const response = page.waitForResponse(r => r.url() === base + '/api/review' && r.request().method() === 'POST');

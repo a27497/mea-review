@@ -1,0 +1,45 @@
+{
+  "mode": "MOCK_OWNED_NOT_AI_NOT_GITHUB",
+  "versions": [
+    {
+      "label": "v1",
+      "file": "v1.json",
+      "input_sha256": "972146ed5818af43aae6a281c9925780e678bde6ec15803e4627a89106972f7d",
+      "head": "f4114af73c3f9892543c8372bb5328cac13f470e",
+      "parent_head": null,
+      "relation": "ROOT"
+    },
+    {
+      "label": "v2",
+      "file": "v2.json",
+      "input_sha256": "77656a9d787142d14a07858d7f7952a3111454904402c02669abeec93583c723",
+      "head": "74cc1eab22f923c41f8a43a925455839db4301db",
+      "parent_head": "f4114af73c3f9892543c8372bb5328cac13f470e",
+      "relation": "MOCK_LINEAR"
+    },
+    {
+      "label": "v3",
+      "file": "v3.json",
+      "input_sha256": "c193558e44016d111062cd519a4bf3c62325bceecc17c59fb47fcb6e9602c1e9",
+      "head": "ceee8bf75a42fff099ceb00bbb21a0a27eccf310",
+      "parent_head": "74cc1eab22f923c41f8a43a925455839db4301db",
+      "relation": "MOCK_LINEAR"
+    },
+    {
+      "label": "v4",
+      "file": "v4.json",
+      "input_sha256": "1f676caa5847825c7889c3f7ee711ad054dd1cb71014fb0fca8f32f92bd8feb4",
+      "head": "689ae9be3fcb6e5ce11bf6ad0001f685bf4f9197",
+      "parent_head": "ceee8bf75a42fff099ceb00bbb21a0a27eccf310",
+      "relation": "MOCK_LINEAR"
+    },
+    {
+      "label": "v5",
+      "file": "v5.json",
+      "input_sha256": "afd9d193dfc9c7982ecfe5a0c6ab905f62c7890b690581c44a7aab1897cdadc4",
+      "head": "249a46858a31cfd5c9871ece1580183717680778",
+      "parent_head": null,
+      "relation": "FORCE_PUSH"
+    }
+  ]
+}

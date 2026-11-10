@@ -3,6 +3,8 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .contract import MAX_BYTES, decode, validate
+from .human_review import api as human_api
+from .human_review.service import Service
 from .investigation import tasks
 from .investigation.decision import GOAL
 from .investigation.tools import View
@@ -29,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
     def send(self, status, value, kind='application/json'):
         raw = json.dumps(value, ensure_ascii=False).encode() if kind == 'application/json' else value
         self.send_response(status)
-        self.send_header('Content-Type', kind + ('; charset=utf-8' if not kind.startswith('image/') else ''))
+        self.send_header('Content-Type', kind + ('; charset=utf-8' if kind.startswith(('text/', 'application/json')) else ''))
         self.send_header('Content-Length', str(len(raw)))
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
@@ -40,10 +42,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.allowed():
             return self.send(403, {'error': 'LOOPBACK_ORIGIN_REQUIRED'})
-        static = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
-        if self.path in static:
-            filename, kind = static[self.path]
-            return self.send(200, (WEB/filename).read_bytes(), kind)
+        static = {
+            '/': ('review-v3.html', 'text/html'),
+            '/review-v3.js': ('review-v3.js', 'text/javascript'),
+            '/review-v3.css': ('review-v3.css', 'text/css'),
+            '/review-font/inter.woff2': ('review-font/inter.woff2', 'font/woff2'),
+            '/review-font/plex-mono.woff2': ('review-font/plex-mono.woff2', 'font/woff2'),
+            '/classic': ('index.html', 'text/html'),
+            '/app.js': ('app.js', 'text/javascript'),
+            '/style.css': ('style.css', 'text/css'),
+        }
+        route = self.path.partition('?')[0]
+        if route in static:
+            filename, kind = static[route]
+            return self.send(200, (WEB / filename).read_bytes(), kind)
+        if self.path.startswith('/api/human/'):
+            return human_api.get_request(self)
         if self.path == '/api/tasks':
             return self.send(200, self.server.investigations.store.list())
         for prefix in ('/api/task/', '/api/task-export/', '/api/task-json/'):
@@ -68,6 +82,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.allowed():
             return self.send(403, {'error': 'LOOPBACK_ORIGIN_REQUIRED'})
+        if self.path.startswith('/api/human/'):
+            return human_api.post_request(self)
         cancelling = self.path.startswith('/api/task-cancel/')
         investigating = cancelling or self.path == '/api/tasks'
         if not investigating and self.path not in {'/api/review', '/api/export'}:
@@ -110,8 +126,10 @@ class Handler(BaseHTTPRequestHandler):
 def serve(port=8810, task_dir=None):
     with ThreadingHTTPServer(('127.0.0.1', port), Handler) as server:
         server.investigations = tasks.Manager(task_dir)
-        print(f'MEA OFFLINE http://127.0.0.1:{server.server_port}', flush=True)
         try:
+            server.human_reviews = Service(server.investigations.store)
+            server.human_reviews.recover()
+            print(f'MEA OFFLINE http://127.0.0.1:{server.server_port}', flush=True)
             server.serve_forever()
         except KeyboardInterrupt:
             pass

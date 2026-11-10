@@ -1,28 +1,54 @@
-Path	Source at 344acf0	Role or adaptation
-.gitignore	New	Generated local state exclusions
-README.md	New	Local use, scope and verification
-SOURCE-MANIFEST.tsv	New	Explicit tracked file allowlist
-fixtures/demo/counterexample.json	fixtures/investigation/counterexample.json	Byte-exact owned fixture
-fixtures/demo/none-return.json	fixtures/investigation/none-return.json	Byte-exact owned fixture
-fixtures/demo/static-assertion.json	New	Synthetic static finding and citation fixture
-mea/__init__.py	mea/__init__.py	Byte-exact
-mea/__main__.py	mea/__main__.py	Offline entry point and task directory option
-mea/contract.py	mea/contract.py	UTF-8 import and shared Git blob digest
-mea/export.py	mea/export.py	Static report export
-mea/investigation/__init__.py	mea/investigation/__init__.py	Byte-exact
-mea/investigation/decision.py	mea/investigation/decision.py	Byte-exact
-mea/investigation/tasks.py	mea/investigation/tasks.py	Byte-exact
-mea/investigation/tools.py	mea/investigation/tools.py	Validate imported snapshots without collector dependency
-mea/investigation/validation.py	mea/investigation/validation.py	Byte-exact
-mea/patch.py	mea/patch.py	Byte-exact
-mea/review.py	mea/review.py	Byte-exact
-mea/server.py	mea/server.py	Static and task routes without collector or provider routes
-package-lock.json	package-lock.json	Pinned browser test dependencies retained
-package.json	New	Offline start and verification scripts
-scripts/offline-browser.mjs	New	Browser acceptance with hard restart and offline controls
-tests/investigation_fixtures.py	tests/investigation_fixtures.py	Self-owned in-memory fixture helper without collector
-tests/test_investigation.py	tests/test_investigation.py	Retained investigation regressions with local fixtures
-tests/test_review.py	tests/test_review.py	Retained static regressions with synthetic fixtures
-web/app.js	web/public-app.js	Offline review, exports and frozen citation navigation
-web/index.html	web/public-index.html	Offline workbench with task controls
-web/style.css	web/public-style.css	Workbench styles for offline controls
+Path	Source path	Source checkpoint	Role or adaptation
+.gitignore	New	Batch 1	Generated local state exclusions
+README.md	New	Batch 1	Document Review v3 and classic workbench flows
+SOURCE-MANIFEST.tsv	New	Batch 1 and 2	Explicit tracked file allowlist
+THIRD_PARTY_NOTICES.md	New	Batch 2	Review v3 font notices and package dependency scope
+fixtures/demo/counterexample.json	fixtures/investigation/counterexample.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
+fixtures/demo/none-return.json	fixtures/investigation/none-return.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
+fixtures/demo/static-assertion.json	New	Batch 1	Synthetic static finding and citation fixture
+fixtures/review/manifest.json	fixtures/review/manifest.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+fixtures/review/v1.json	fixtures/review/v1.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+fixtures/review/v2.json	fixtures/review/v2.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+fixtures/review/v3.json	fixtures/review/v3.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+fixtures/review/v4.json	fixtures/review/v4.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+fixtures/review/v5.json	fixtures/review/v5.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
+mea/__init__.py	mea/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/__main__.py	mea/__main__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Offline entry point and task directory option
+mea/contract.py	mea/contract.py	344acf0c8bd59157e81d03aa771547e2b330986e	UTF-8 import and shared Git blob digest
+mea/export.py	mea/export.py	344acf0c8bd59157e81d03aa771547e2b330986e	Static report export
+mea/human_review/__init__.py	mea/human_review/__init__.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Mock module
+mea/human_review/api.py	mea/human_review/api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Mock review API with bounded local requests
+mea/human_review/compare.py	mea/human_review/compare.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Conservative comparison on batch 1 frozen-read protocol
+mea/human_review/demo.py	mea/human_review/demo.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run self-owned frozen examples with batch 1 tools
+mea/human_review/github_contract.py	mea/human_review/github_contract.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact pure Mock wire shape
+mea/human_review/mock_github.py	mea/human_review/mock_github.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact local Mock transport
+mea/human_review/publisher.py	mea/human_review/publisher.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact confirmation, dispatch and reconciliation
+mea/human_review/service.py	mea/human_review/service.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact review workspace and version history
+mea/human_review/store.py	mea/human_review/store.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact SQLite review records
+mea/investigation/__init__.py	mea/investigation/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/investigation/decision.py	mea/investigation/decision.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/investigation/tasks.py	mea/investigation/tasks.py	344acf0c8bd59157e81d03aa771547e2b330986e	Add SQLite transaction and cross-process Mock review lock
+mea/investigation/tools.py	mea/investigation/tools.py	344acf0c8bd59157e81d03aa771547e2b330986e	Validate imported snapshots without collector dependency
+mea/investigation/validation.py	mea/investigation/validation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/patch.py	mea/patch.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/review.py	mea/review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/server.py	mea/server.py	344acf0c8bd59157e81d03aa771547e2b330986e	Serve Review v3 and same-origin Mock routes alongside classic review
+package-lock.json	package-lock.json	344acf0c8bd59157e81d03aa771547e2b330986e	Pinned browser test dependencies retained
+package.json	New	Batch 1	Expose separate Review v3 browser verification
+scripts/offline-browser.mjs	New	Batch 1	Re-run the first batch browser workflow at the classic route
+scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Desktop and mobile browser acceptance with owned examples
+tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
+tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
+tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler
+tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained investigation regressions with local fixtures
+tests/test_review.py	tests/test_review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained static regressions with synthetic fixtures
+web/app.js	web/public-app.js	344acf0c8bd59157e81d03aa771547e2b330986e	Offline review, exports and frozen citation navigation
+web/index.html	web/public-index.html	344acf0c8bd59157e81d03aa771547e2b330986e	Link classic workbench to Review v3
+web/review-font/INTER-OFL.txt	web/review-font/INTER-OFL.txt	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
+web/review-font/PLEX-OFL.txt	web/review-font/PLEX-OFL.txt	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
+web/review-font/inter.woff2	web/review-font/inter.woff2	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
+web/review-font/plex-mono.woff2	web/review-font/plex-mono.woff2	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
+web/review-v3.css	web/review-v3.css	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Review v3 layout
+web/review-v3.html	web/review-v3.html	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Review v3 shell with owned offline walkthrough
+web/review-v3.js	web/review-v3.js	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Review v3 with self-contained offline flows
+web/style.css	web/public-style.css	344acf0c8bd59157e81d03aa771547e2b330986e	Workbench styles for offline controls

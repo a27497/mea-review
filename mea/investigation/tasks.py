@@ -57,6 +57,22 @@ class Store:
         finally:
             db.close()
 
+    @contextmanager
+    def transaction(self):
+        with self.lock, self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            yield db
+
+    @contextmanager
+    def launch_lock(self):
+        # Serialize Mock dispatch, recovery and review-version updates across processes.
+        with self.lock, (self.root / 'launch.lock').open('a') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
     def _put(self,db,t):
         t['updated_at']=time.time()
         db.execute('UPDATE tasks SET doc=? WHERE id=?',(canonical(t).decode(),t['id']))

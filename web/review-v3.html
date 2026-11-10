@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MEA Review</title>
+  <link rel="stylesheet" href="/review-v3.css">
+  <script src="/review-v3.js" type="module"></script>
+</head>
+<body>
+  <a class="skip" href="#code">Skip to code</a>
+  <header class="top">
+    <a class="brand" href="/" aria-label="MEA Review home"><span class="logo" aria-hidden="true">&lt;/&gt;</span>MEA Review</a>
+    <span class="crumb" id="crumb"></span>
+    <nav class="desktop-cases" aria-label="Review cases">
+      <button type="button" data-case="completed">Completed</button>
+      <button type="button" data-case="human">Human review</button>
+      <button type="button" data-case="compare">Re-review</button>
+    </nav>
+    <details class="switch" id="switch">
+      <summary class="button"><span class="switch-label">Switch case</span><span aria-hidden="true">⌄</span></summary>
+      <div class="popover">
+        <button type="button" data-case="completed">Completed</button>
+        <button type="button" data-case="human">Human review</button>
+        <button type="button" data-case="compare">Re-review</button>
+        <hr>
+        <a href="/classic" id="classic-link">Import &amp; task controls</a>
+        <button type="button" id="saved-open">Saved workspaces</button>
+      </div>
+    </details>
+  </header>
+  <section class="intro" id="intro" aria-label="Current review"></section>
+  <nav class="panes" aria-label="Workspace panels">
+    <button type="button" data-panel="files" aria-controls="files">Files</button>
+    <button type="button" data-panel="code" aria-controls="code">Diff</button>
+    <button type="button" data-panel="review" aria-controls="review">Review</button>
+  </nav>
+  <main id="workspace" class="workspace" data-panel="code">
+    <nav id="files" class="files" tabindex="-1" aria-label="Files and versions"></nav>
+    <section id="code" class="code" tabindex="-1" aria-label="Frozen code"></section>
+    <aside id="review" class="review" tabindex="-1" aria-label="Review and evidence"></aside>
+  </main>
+  <div id="notice" class="toast" role="status" hidden></div>
+  <footer id="footer"></footer>
+  <dialog id="demo-dialog" aria-labelledby="demo-title">
+    <div class="dialog-head"><h2 id="demo-title">MEA Review offline demo</h2><form method="dialog"><button class="button">Close</button></form></div>
+    <p class="rail-sub">Start with an owned offline investigation, then try a local draft and compare frozen revisions.</p>
+    <div class="demo-routes">
+      <button type="button" class="button saved-row" data-case="completed" aria-describedby="demo-completed">Completed</button>
+      <p id="demo-completed">Run the owned v4 example. Use the Review panel to inspect checked scope and follow a source citation.</p>
+      <button type="button" class="button saved-row" data-case="human" aria-describedby="demo-human">Human review</button>
+      <p id="demo-human">Owned Mock fixture. Open the candidate, save and preview a draft, confirm the exact comment, then send to Mock.</p>
+      <button type="button" class="button saved-row" data-case="compare" aria-describedby="demo-compare">Re-review</button>
+      <p id="demo-compare">Five owned Mock revisions. Start with v1 → v2, then choose the other version pairs and inspect each result.</p>
+    </div>
+  </dialog>
+  <dialog id="saved-dialog" aria-labelledby="saved-title">
+    <div class="dialog-head"><h2 id="saved-title">Saved workspaces</h2><form method="dialog"><button class="button">Close</button></form></div>
+    <div id="saved-content"></div>
+  </dialog>
+  <template id="icons">
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4.5 2.5 8 6 4.5 9.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </template>
+</body>
+</html>

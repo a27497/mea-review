@@ -15,4 +15,14 @@ Browser test dependencies are installed from the pinned npm lockfile.
 Playwright 1.56.1 is Apache-2.0. Its optional macOS dependency fsevents
 2.3.2 is MIT. Neither dependency nor the browser binaries are bundled here.
 
-All included pull request examples are synthetic MEA project fixtures.
+The workbench examples are synthetic MEA project fixtures. The separate
+ReviewBench replay also includes two frozen external PR snapshots used as
+inert data. The source notices were checked against both pinned revisions.
+The [sample manifest](benchmarks/reviewbench/samples/manifest.json) records
+the exact commits, source hashes and license paths.
+
+| ReviewBench material | License |
+| --- | --- |
+| resplab/leap #48 frozen source and patch | [MIT notice](benchmarks/reviewbench/samples/licenses/leap-MIT.txt) |
+| torchfont/torchfont #133 frozen source and patch | [MIT notice](benchmarks/reviewbench/samples/licenses/torchfont-MIT.txt) |
+| Pinned ReviewBench input reader and types | [MIT notice](benchmarks/reviewbench/vendor/ReviewBench/LICENSE) |

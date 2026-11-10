@@ -1,0 +1,1113 @@
+{
+  "cells": [
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 3,
+          "reported_tokens": 5177,
+          "seconds": 5.069470167160034,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 34,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 36142,
+          "seconds": 10.23425841331482,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 21,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 19107,
+          "seconds": 5.6046295166015625,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.088643634,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-1",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 1,
+          "reported_tokens": 2946,
+          "seconds": 2.62729549407959,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 44,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32550,
+          "seconds": 11.580969333648682,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 42,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 28222,
+          "seconds": 12.311804056167603,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.136477187,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-2",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 4153,
+          "seconds": 4.8784215450286865,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 5,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 35644,
+          "seconds": 10.977655172348022,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 6,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 17572,
+          "seconds": 5.654794931411743,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.100936912,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-3",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 4,
+          "reported_tokens": 5017,
+          "seconds": 5.66904616355896,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 11,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34212,
+          "seconds": 16.11434292793274,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 18536,
+          "seconds": 8.30992603302002,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.078546838,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-4",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 4258,
+          "seconds": 2.399688720703125,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 39,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31345,
+          "seconds": 12.145155429840088,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 145,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 25456,
+          "seconds": 11.410810708999634,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.153788372,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-5",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 1066,
+          "seconds": 1.2222938537597656,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 5,
+          "observed_changed_lines": 110,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 35111,
+          "seconds": 15.130293369293213,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 123,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 23187,
+          "seconds": 10.394275903701782,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.386691139,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-6",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 5762,
+          "seconds": 2.6662449836730957,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 34,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34124,
+          "seconds": 14.329603433609009,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 87,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 27140,
+          "seconds": 10.77926254272461,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.203721639,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-7",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 3474,
+          "seconds": 1.7940828800201416,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32571,
+          "seconds": 10.607324600219727,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 3,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32551,
+          "seconds": 11.715769052505493,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.054898757,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-8",
+      "round": 1
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 4984,
+          "seconds": 4.071503639221191,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 32,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34014,
+          "seconds": 11.15634036064148,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 21,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 19115,
+          "seconds": 5.031684637069702,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.154495867,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-1",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 3225,
+          "seconds": 3.909310817718506,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 2,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31491,
+          "seconds": 11.560866832733154,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 3,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 15435,
+          "seconds": 6.343981981277466,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.158947374,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-2",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 4352,
+          "seconds": 6.296330213546753,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 5,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 35529,
+          "seconds": 11.041396379470825,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 6,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 17574,
+          "seconds": 5.062330722808838,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.128778903,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-3",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 4,
+          "reported_tokens": 5105,
+          "seconds": 6.452269554138184,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 9,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34025,
+          "seconds": 10.640034675598145,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 18529,
+          "seconds": 6.34305739402771,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.104978877,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-4",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 4255,
+          "seconds": 1.8779034614562988,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 18,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31180,
+          "seconds": 9.325369358062744,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 145,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 25462,
+          "seconds": 7.314038276672363,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.071521592,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-5",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 1081,
+          "seconds": 1.3755040168762207,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 5,
+          "observed_changed_lines": 92,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 33787,
+          "seconds": 14.669498682022095,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 123,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 23181,
+          "seconds": 10.126860857009888,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.059973977,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-6",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 5737,
+          "seconds": 2.1171109676361084,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 34,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34103,
+          "seconds": 12.256520748138428,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 87,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 27175,
+          "seconds": 10.506679058074951,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.209362881,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-7",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 3455,
+          "seconds": 1.2751986980438232,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31774,
+          "seconds": 9.655946731567383,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 3,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 33342,
+          "seconds": 8.98592495918274,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.039256324,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-8",
+      "round": 2
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 4951,
+          "seconds": 4.246194124221802,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 34,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34361,
+          "seconds": 9.55156135559082,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 26,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 19229,
+          "seconds": 5.598176956176758,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.085947657,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-1",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 3172,
+          "seconds": 3.533148765563965,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 17,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31523,
+          "seconds": 12.821093320846558,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 3,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 18325,
+          "seconds": 10.521092176437378,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.187488841,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-2",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 2,
+          "reported_tokens": 4227,
+          "seconds": 4.869153738021851,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 10,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 35739,
+          "seconds": 10.543059349060059,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 6,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 17574,
+          "seconds": 6.354401111602783,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.109168499,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-3",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 4,
+          "reported_tokens": 5057,
+          "seconds": 6.413658142089844,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 10,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32045,
+          "seconds": 11.409650564193726,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 2,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 18529,
+          "seconds": 5.629686117172241,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.092006193,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-4",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 4257,
+          "seconds": 1.98234224319458,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 18,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 31165,
+          "seconds": 9.184863328933716,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 145,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 25462,
+          "seconds": 6.90113091468811,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.066195662,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-5",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 1066,
+          "seconds": 1.3000121116638184,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 5,
+          "observed_changed_lines": 92,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 33965,
+          "seconds": 11.80545973777771,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 123,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 23185,
+          "seconds": 8.863734245300293,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.107750157,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-6",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 5737,
+          "seconds": 2.10845685005188,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 50,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 34477,
+          "seconds": 12.450372219085693,
+          "status": "STOPPED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 3,
+          "observed_changed_lines": 87,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 27175,
+          "seconds": 9.766666173934937,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.155362232,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-7",
+      "round": 3
+    },
+    {
+      "arms": {
+        "direct": {
+          "base_only_candidates": 0,
+          "known_http_posts": 1,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 3452,
+          "seconds": 1.60740327835083,
+          "status": "COMPLETED"
+        },
+        "optimized_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 1,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32731,
+          "seconds": 9.239512920379639,
+          "status": "COMPLETED"
+        },
+        "original_agent": {
+          "base_only_candidates": 0,
+          "known_http_posts": 4,
+          "observed_changed_lines": 3,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 32564,
+          "seconds": 7.3770060539245605,
+          "status": "STOPPED"
+        },
+        "static": {
+          "base_only_candidates": 0,
+          "known_http_posts": 0,
+          "observed_changed_lines": 0,
+          "pending_head_candidates": 0,
+          "rejected_candidates": 0,
+          "reported_tokens": 0,
+          "seconds": 0.025938135,
+          "status": "COMPLETED"
+        }
+      },
+      "case": "case-8",
+      "round": 3
+    }
+  ],
+  "schema": "mea-reviewbench-c1-main-projection-v1",
+  "source_sha256": {
+    "per-cell.json": "2dde9c6ae3206ba20d780592a569f5683c67df2ab798c562c94a06a03d5b32d1",
+    "summary.json": "245f26d4163a7fe37138c4133b8b542f30b941299893743de6339ed323ffe947"
+  }
+}

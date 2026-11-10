@@ -1,0 +1,102 @@
+{
+  "cases": [
+    {
+      "file_sha256": "177fe230cbbb9b3708bcc69c3982dd0009e407bf8d7f9b7b599f57fb0121ceb2",
+      "id": "rb-e686dde56bd14495622b",
+      "initial_omitted_paths": [],
+      "initial_visible_paths": [
+        "leap/utils.py",
+        ".github/workflows/tests_workflow.yml",
+        "docs/cli/index.rst",
+        "docs/model/model-birth.rst",
+        "docs/model/model-simulation.rst",
+        "requirements-data-generation.txt",
+        "requirements-docs.txt"
+      ],
+      "licenses": {
+        "base": {
+          "git_blob_sha": "c4fd4c499c16d89c413be67cc51a087e92f3b682",
+          "path": "licenses/leap-MIT.txt",
+          "sha256": "a22cfbd876e8ad1a03f256cd1e1c99ff9743d9be71638d134750c589b4f974be",
+          "source": "https://raw.githubusercontent.com/resplab/leap/e7e2065f7e50e2525683947d6ec6e39d79ad2f4c/LICENSE",
+          "upstream_path": "LICENSE"
+        },
+        "head": {
+          "git_blob_sha": "c4fd4c499c16d89c413be67cc51a087e92f3b682",
+          "path": "licenses/leap-MIT.txt",
+          "sha256": "a22cfbd876e8ad1a03f256cd1e1c99ff9743d9be71638d134750c589b4f974be",
+          "source": "https://raw.githubusercontent.com/resplab/leap/fced06441c1e3969952312e13525ee355d7a9356/LICENSE",
+          "upstream_path": "LICENSE"
+        }
+      },
+      "number": 48,
+      "repository": "resplab/leap",
+      "revisions": {
+        "base": "e7e2065f7e50e2525683947d6ec6e39d79ad2f4c",
+        "head": "fced06441c1e3969952312e13525ee355d7a9356",
+        "target_base": "e7e2065f7e50e2525683947d6ec6e39d79ad2f4c"
+      },
+      "snapshot": "inputs/rb-e686dde56bd14495622b.json",
+      "snapshot_sha256": "ca28810adbec6cd52c649564ec0f1cf0cb5059150f0f175f01bd6bd6209e15e6",
+      "view_sha256": "35cc5669bcc4c7a41b6e66a2e20fe08f7216cfddcef1effc3e4633f6d1eebf19"
+    },
+    {
+      "file_sha256": "9203e3e537e6849f29f197e6c042c9af0869a1b9b5be4970ff4c122dc481105b",
+      "id": "rb-49978af1c8e54a3db739",
+      "initial_omitted_paths": [
+        "tests/test_dataset.py"
+      ],
+      "initial_visible_paths": [
+        "torchfont/datasets.py",
+        "torchfont/metadata.py",
+        "src/dataset/entry.rs",
+        "src/dataset/mod.rs",
+        "torchfont/_torchfont.pyi"
+      ],
+      "licenses": {
+        "base": {
+          "git_blob_sha": "1007508276b7b709df994588f5ceb7e292145cc8",
+          "path": "licenses/torchfont-MIT.txt",
+          "sha256": "8a95426aae36b863637d1ae62c92ca35b5b732ef40e5fce3a686ba81d72ee690",
+          "source": "https://raw.githubusercontent.com/torchfont/torchfont/5a2c993caa9c1183f58b1cc50aea6a2609d96959/LICENSE",
+          "upstream_path": "LICENSE"
+        },
+        "head": {
+          "git_blob_sha": "1007508276b7b709df994588f5ceb7e292145cc8",
+          "path": "licenses/torchfont-MIT.txt",
+          "sha256": "8a95426aae36b863637d1ae62c92ca35b5b732ef40e5fce3a686ba81d72ee690",
+          "source": "https://raw.githubusercontent.com/torchfont/torchfont/7604bc745c38d151e23b8f7528a65f74c2613545/LICENSE",
+          "upstream_path": "LICENSE"
+        }
+      },
+      "number": 133,
+      "repository": "torchfont/torchfont",
+      "revisions": {
+        "base": "5a2c993caa9c1183f58b1cc50aea6a2609d96959",
+        "head": "7604bc745c38d151e23b8f7528a65f74c2613545",
+        "target_base": "5a2c993caa9c1183f58b1cc50aea6a2609d96959"
+      },
+      "snapshot": "inputs/rb-49978af1c8e54a3db739.json",
+      "snapshot_sha256": "d5c401247d23e2a8a14cc83c056cdeff1a805378f59fbc39cff1f6a901a5c3c1",
+      "view_sha256": "2327fc65323837b7f1ac1e39815119ac05558c76111533cdae5ae65a9d2bd884"
+    }
+  ],
+  "checkpoint": "e41bf60796c4ddae54566388636dd943ac623465",
+  "frozen_cohort_file_sha256": "91774013da46625ec3083d8ef39117ffc7f8af3d9e90d2ece4ef322b918a4b83",
+  "input_reader": {
+    "LICENSE": {
+      "sha256": "18a24e58967e165bcdd21030b16b85673e025439d55686d3af642c8f815d5840",
+      "source": "https://raw.githubusercontent.com/review-bench/ReviewBench/f223ce33558a6d211fd222b1f7ff2fd7b44403d4/LICENSE"
+    },
+    "scripts/eval/input-validation.ts": {
+      "sha256": "30bc63f53695d83c468aba4d22c3e49da5dc1b68dc98f0e88f394aea313fb153",
+      "source": "https://raw.githubusercontent.com/review-bench/ReviewBench/f223ce33558a6d211fd222b1f7ff2fd7b44403d4/scripts/eval/input-validation.ts"
+    },
+    "scripts/lib/types.ts": {
+      "sha256": "f835f80db8c4441217efc2e0b2d0214632bac1866af98679c64eeb67860b30d0",
+      "source": "https://raw.githubusercontent.com/review-bench/ReviewBench/f223ce33558a6d211fd222b1f7ff2fd7b44403d4/scripts/lib/types.ts"
+    }
+  },
+  "reviewbench_commit": "f223ce33558a6d211fd222b1f7ff2fd7b44403d4",
+  "schema": "mea-reviewbench-release-samples-v1"
+}

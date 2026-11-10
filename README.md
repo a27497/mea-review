@@ -101,6 +101,19 @@ available loopback port, uses a fresh task database and writes test evidence
 under artifacts. MEA_E2E_OUT and MEA_V3_E2E_OUT select output directories
 for the classic and Review v3 browser checks.
 
+## Replay ReviewBench offline
+
+Run the packaged two-sample comparison and reproduce C1 Main telemetry with
+Python 3.12+ and Node 24. Use a fresh evidence directory.
+
+~~~sh
+python3 -I -B benchmarks/reviewbench/verify.py --out artifacts/reviewbench-offline-1
+~~~
+
+The benchmark runs Static, Direct Mock and Agent Mock. The historical C1
+Main recomputation preserves PARTIAL and independent quality BLOCKED.
+[Replay guide and method](benchmarks/reviewbench/README.md)
+
 ## Scope and provenance
 
 The tool and report engines come from MEA product checkpoint

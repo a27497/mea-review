@@ -1,0 +1,95 @@
+{
+  "campaign_status": "PARTIAL",
+  "judge_requests": 0,
+  "main": {
+    "direct": {
+      "base_only_candidates": 0,
+      "completed": 24,
+      "completed_rate": 1.0,
+      "failed_rate": 0.0,
+      "known_http_posts": 24,
+      "n": 24,
+      "observed_changed_lines": 0,
+      "pending_head_candidates": 0,
+      "rejected_candidates": 30,
+      "reported_tokens": 95966,
+      "task_seconds": {
+        "n": 24,
+        "p50": 2.62729549407959,
+        "p95": 6.413658142089844
+      }
+    },
+    "optimized_agent": {
+      "base_only_candidates": 0,
+      "completed": 12,
+      "completed_rate": 0.5,
+      "failed_rate": 0.5,
+      "known_http_posts": 99,
+      "n": 24,
+      "observed_changed_lines": 703,
+      "pending_head_candidates": 0,
+      "rejected_candidates": 0,
+      "reported_tokens": 803608,
+      "task_seconds": {
+        "n": 24,
+        "p50": 11.15634036064148,
+        "p95": 15.130293369293213
+      }
+    },
+    "original_agent": {
+      "base_only_candidates": 0,
+      "completed": 0,
+      "completed_rate": 0.0,
+      "failed_rate": 1.0,
+      "known_http_posts": 69,
+      "n": 24,
+      "observed_changed_lines": 1211,
+      "pending_head_candidates": 0,
+      "rejected_candidates": 0,
+      "reported_tokens": 553627,
+      "task_seconds": {
+        "n": 24,
+        "p50": 7.3770060539245605,
+        "p95": 11.715769052505493
+      }
+    },
+    "static": {
+      "base_only_candidates": 0,
+      "completed": 24,
+      "completed_rate": 1.0,
+      "failed_rate": 0.0,
+      "known_http_posts": 0,
+      "n": 24,
+      "observed_changed_lines": 0,
+      "pending_head_candidates": 0,
+      "rejected_candidates": 0,
+      "reported_tokens": 0,
+      "task_seconds": {
+        "n": 24,
+        "p50": 0.104978877,
+        "p95": 0.209362881
+      }
+    }
+  },
+  "main_distinct_prs": 8,
+  "main_shared_positive_prs": 6,
+  "quality": {
+    "augmented": {
+      "f1": null,
+      "precision": null,
+      "recall": null
+    },
+    "confirmed_fp": null,
+    "grounded": {
+      "f1": null,
+      "precision": null,
+      "recall": null
+    },
+    "matched_tp": null,
+    "status": "BLOCKED"
+  },
+  "source_sha256": {
+    "per-cell.json": "2dde9c6ae3206ba20d780592a569f5683c67df2ab798c562c94a06a03d5b32d1",
+    "summary.json": "245f26d4163a7fe37138c4133b8b542f30b941299893743de6339ed323ffe947"
+  }
+}

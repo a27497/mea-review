@@ -1,0 +1,28 @@
+Path	Source at 344acf0	Role or adaptation
+.gitignore	New	Generated local state exclusions
+README.md	New	Local use, scope and verification
+SOURCE-MANIFEST.tsv	New	Explicit tracked file allowlist
+fixtures/demo/counterexample.json	fixtures/investigation/counterexample.json	Byte-exact owned fixture
+fixtures/demo/none-return.json	fixtures/investigation/none-return.json	Byte-exact owned fixture
+fixtures/demo/static-assertion.json	New	Synthetic static finding and citation fixture
+mea/__init__.py	mea/__init__.py	Byte-exact
+mea/__main__.py	mea/__main__.py	Offline entry point and task directory option
+mea/contract.py	mea/contract.py	UTF-8 import and shared Git blob digest
+mea/export.py	mea/export.py	Static report export
+mea/investigation/__init__.py	mea/investigation/__init__.py	Byte-exact
+mea/investigation/decision.py	mea/investigation/decision.py	Byte-exact
+mea/investigation/tasks.py	mea/investigation/tasks.py	Byte-exact
+mea/investigation/tools.py	mea/investigation/tools.py	Validate imported snapshots without collector dependency
+mea/investigation/validation.py	mea/investigation/validation.py	Byte-exact
+mea/patch.py	mea/patch.py	Byte-exact
+mea/review.py	mea/review.py	Byte-exact
+mea/server.py	mea/server.py	Static and task routes without collector or provider routes
+package-lock.json	package-lock.json	Pinned browser test dependencies retained
+package.json	New	Offline start and verification scripts
+scripts/offline-browser.mjs	New	Browser acceptance with hard restart and offline controls
+tests/investigation_fixtures.py	tests/investigation_fixtures.py	Self-owned in-memory fixture helper without collector
+tests/test_investigation.py	tests/test_investigation.py	Retained investigation regressions with local fixtures
+tests/test_review.py	tests/test_review.py	Retained static regressions with synthetic fixtures
+web/app.js	web/public-app.js	Offline review, exports and frozen citation navigation
+web/index.html	web/public-index.html	Offline workbench with task controls
+web/style.css	web/public-style.css	Workbench styles for offline controls

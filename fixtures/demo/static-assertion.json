@@ -1,0 +1,50 @@
+{
+  "files": [
+    {
+      "path": "tests/test_total.py",
+      "base_path": "tests/test_total.py",
+      "status": "modified",
+      "patch": "@@ -1,2 +1,2 @@\n def test_total():\n-    assert total() == 2\n+    assert True\n",
+      "sides": {
+        "head": {
+          "text": "def test_total():\n    assert True\n",
+          "sha256": "776e265bcbd6c480f319e2407cdb3375a27ae9362109bd2830b11518772500e6",
+          "blob_sha": "ec1ea5c7cb471f1ff2f6cc1d9dd0717e6ffa3b97"
+        },
+        "base": {
+          "text": "def test_total():\n    assert total() == 2\n",
+          "sha256": "422a01b05a0ed21667ae79e1b1ae3986abb801bb8a8e1e055691af8d32250e05",
+          "blob_sha": "4dae5a01fe083b595f0d9b999b57b01a38ab0c9a"
+        }
+      }
+    }
+  ],
+  "id": "owned-static-assertion",
+  "pr": {
+    "body": "Self-owned fixture for demonstrating a static finding and source citations.",
+    "number": 1,
+    "repository": "owned/python-fixture",
+    "title": "Synthetic example — constant assertion",
+    "url": "https://github.com/owned/python-fixture/pull/1"
+  },
+  "provenance": {
+    "capture_sha256": "267b4833fb5a5464009fd3e2b9572b175ed36418e175d0fd49e6feae84f4df10",
+    "captured_at": "2026-11-08T06:48:41.600114+00:00",
+    "kind": "FROZEN_PENDING_REVIEW",
+    "merged_at_capture": false,
+    "pending_review_version": true,
+    "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+    "state_at_capture": "open"
+  },
+  "revisions": {
+    "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "target_base": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "schema": "mea-snapshot-v1",
+  "scope": {
+    "complete_listing": true,
+    "omitted_sources": [],
+    "reported_changed_files": 1
+  }
+}

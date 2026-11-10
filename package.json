@@ -1,0 +1,14 @@
+{
+  "name": "mea-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -B -m mea serve",
+    "test": "python3 -B -m unittest discover -s tests -v",
+    "test:e2e": "node scripts/offline-browser.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

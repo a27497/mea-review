@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MEA · PR Review</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><strong>MEA</strong><span>PR Review</span><span class="badge" id="mode-badge">STATIC_RULES_NOT_AI</span></header>
+<main>
+  <section class="intro"><p class="eyebrow">OFFLINE REVIEW WORKBENCH</p><h1>Changes in context.<br>Findings you can inspect.</h1><p>Open an included example or import a frozen PR snapshot. Follow each citation to its source and export the review.</p></section>
+  <section class="toolbar" aria-label="Import PR"><label>Example snapshot<select id="demo"><option value="">Choose a synthetic example</option></select></label><button id="load">Review snapshot</button><label class="upload">Import snapshot JSON<input id="upload" type="file" accept=".json,application/json"></label></section>
+  <p class="notice" id="mode-notice">Static rules only. Imported code is treated as data.</p>
+  <p id="status" role="status" aria-live="polite">Choose a snapshot to begin.</p>
+  <section class="panel" id="investigation" aria-label="Offline investigations">
+    <h2>Offline investigation <span class="badge">OFFLINE_POLICY_NOT_AI · Mock</span></h2>
+    <p>No model call. This deterministic policy checks changed literal None returns and seeks guards in collected callers/tests. It validates the tool loop, not autonomous AI review. Other defect classes remain unknown.</p>
+    <label>Investigation objective (recorded label)<input id="task-goal" maxlength="500" value="Inspect changed literal None returns and seek guards in collected callers/tests."></label>
+    <div class="task-budgets">
+      <label>Decision rounds<input id="task-rounds" type="number" min="1" max="32" value="10"></label>
+      <label>Tool calls<input id="task-tools" type="number" min="1" max="24" value="8"></label>
+      <label>Output bytes<input id="task-bytes" type="number" min="1" max="500000" value="160000"></label>
+      <label>Total seconds<input id="task-seconds" type="number" min="1" max="300" value="60"></label>
+    </div>
+    <button id="create-task" disabled>Create offline task from open frozen PR</button>
+    <p>Tasks save automatically. Identical input, versions, objective and limits reopen the same task, including a cancelled task. To create a separate experiment, change the objective label or limits. Only frozen collected files are available; missing source stays unknown.</p>
+    <label>Saved tasks (latest 200)<select id="task-saved"><option value="">Choose a saved task</option></select></label><button id="open-task">Reopen task</button>
+    <p id="task-message" role="status" aria-live="polite">Open a frozen snapshot to create a task.</p>
+    <section id="task-detail" hidden>
+      <h3 id="task-title"></h3><p id="task-progress" role="status" aria-live="polite"></p>
+      <p id="task-goal-display"></p><details><summary>Frozen identity and budgets</summary><pre id="task-identity"></pre></details>
+      <button id="cancel-task">Cancel task</button><button id="task-md">Export investigation Markdown</button><button id="task-json">Export investigation JSON</button>
+      <h3>Investigation record</h3><p>Actions and observations from the deterministic policy. Citation validation checks source location; correctness requires human review.</p><ol id="task-events"></ol>
+      <h3>Actual tool feedback and evidence</h3><div id="task-results"></div>
+      <h3>Conditional candidates</h3><div id="task-candidates"></div>
+      <h3>Coverage and stop reason</h3><p id="task-limits"></p>
+    </section>
+  </section>
+  <section id="workspace" hidden>
+    <div class="review-heading"><div><h2 id="title"></h2><p id="identity" class="mono"></p></div><button id="export">Export Markdown</button><button id="json">Export JSON</button></div>
+    <div class="columns"><section class="panel"><div class="panel-heading"><h3>Findings <span id="count"></span></h3><label>Priority<select id="priority"><option value="all">All</option><option value="1">P1</option><option value="2">P2</option><option value="3">P3</option></select></label></div><div id="findings"></div><h3>Change observations</h3><p class="muted">Context for review. These are not defect findings.</p><div id="observations"></div></section>
+    <section class="panel evidence"><h3>Evidence</h3><p id="evidence-help">Select a finding or observation to inspect its source.</p><div id="evidence"></div></section></div>
+    <section class="panel"><h3>Review limits</h3><p>No rule findings does not mean approval. Human review is pending. Source hashes check consistency and do not independently authenticate GitHub.</p><ul id="limits"></ul></section>
+  </section>
+    <section class="panel" id="source-panel" hidden><h3 id="source-title">Frozen source</h3><label>Side<select id="source-side"><option value="head">HEAD</option><option value="base">BASE</option></select></label><label>Go to source line<input id="source-line" type="number" min="1" max="8000" value="1"></label><button id="go-line">Locate line</button><p id="source-note"></p><pre id="source-text"></pre><details open><summary>Supplied diff</summary><pre id="source-diff"></pre></details></section>
+</main><footer>MEA · Read-only review · No writeback, repair or merge actions</footer><script type="module" src="/app.js"></script>
+</body></html>

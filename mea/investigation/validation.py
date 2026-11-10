@@ -4,7 +4,7 @@ from ..contract import fields, text, digest
 RESULT_VERSION='mea-investigation-result-v1'
 
 
-def validate_candidates(view, proposed, results):
+def validate_candidates(view, proposed, results, *, detailed=False):
     if not isinstance(proposed,list) or len(proposed)>8:raise ValueError('CANDIDATE_BOUND')
     observed={e['id']:e for r in results for e in r.get('evidence',[])}
     accepted=[];rejected=[];seen=set()
@@ -32,6 +32,9 @@ def validate_candidates(view, proposed, results):
             seen.add(anchor)
             accepted.append(dict(id='candidate-'+digest(c),**c,citations=citations,citation_validity='VALID',
                                  inference='CONDITIONAL_INFERENCE',correctness='UNADJUDICATED',result_version=RESULT_VERSION))
-        except (ValueError,KeyError,TypeError):
-            rejected.append(dict(index=index,reason='DETERMINISTIC_VALIDATION_REJECTED',candidate=c))
+        except (ValueError, KeyError, TypeError) as exc:
+            reason = 'DETERMINISTIC_VALIDATION_REJECTED'
+            if detailed and str(exc) == 'REFERENCE_INVALID_OR_UNOBSERVED':
+                reason = str(exc)
+            rejected.append(dict(index=index, reason=reason, candidate=c))
     return accepted,rejected

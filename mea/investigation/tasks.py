@@ -89,10 +89,14 @@ class Store:
             rows=db.execute('SELECT doc FROM tasks ORDER BY rowid DESC LIMIT 200').fetchall()
         return [public(json.loads(row[0]),summary=True) for row in rows]
 
-    def pending(self):
-        # Worker recovery must also find old tasks outside the latest-200 UI.
-        with self.lock,self.connection() as db:
-            rows=db.execute("SELECT doc FROM tasks WHERE json_extract(doc,'$.status') NOT IN ('COMPLETED','STOPPED','CANCELLED') ORDER BY rowid LIMIT ?",(MAX_ACTIVE,)).fetchall()
+    def pending(self, mode=None):
+        # Recover tasks even when the bounded recent-task display is full.
+        with self.lock, self.connection() as db:
+            rows = db.execute(
+                "SELECT doc FROM tasks WHERE json_extract(doc,'$.status') NOT IN ('COMPLETED','STOPPED','CANCELLED') "
+                "AND (? IS NULL OR json_extract(doc,'$.mode')=?) ORDER BY rowid LIMIT ?",
+                (mode, mode, MAX_ACTIVE),
+            ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def create(self,view,goal=GOAL,budget=None,source=None):
@@ -107,7 +111,7 @@ class Store:
                usage=dict(rounds=0,tools=0,output_bytes=0),created_at=time.time(),updated_at=time.time(),
                events=[],results=[],candidates=[],rejected=[],active=None,notice=NOTICE)
         event(t,'created','Offline policy task saved. No model/target execution. Goal is a label, not a policy instruction.')
-        with self.lock,self.connection() as db:
+        with self.transaction() as db:
             if db.execute('SELECT 1 FROM tasks WHERE id=?',(identifier,)).fetchone():
                 return self.get(identifier)
             active=db.execute("SELECT count(*) FROM tasks WHERE json_extract(doc,'$.status') NOT IN ('COMPLETED','STOPPED','CANCELLED')").fetchone()[0]
@@ -115,13 +119,20 @@ class Store:
             db.execute('INSERT OR IGNORE INTO tasks VALUES (?,?,?)',(identifier,digest(identity),canonical(t).decode()))
         return self.get(identifier)
 
-    def cancel(self,identifier):
-        with self.lock,self.connection() as db:
-            t=self.get(identifier)
-            if t['status'] not in TERMINAL:
-                t.update(status='CANCELLED',reason='USER_CANCELLED')
-                event(t,'cancelled','Cancellation committed; no new step may start. Already-started pure work may return.')
-                self._put(db,t)
+    def cancel(self, identifier):
+        from . import real
+
+        with self.launch_lock(), self.transaction() as db:
+            task = self.get(identifier)
+            if task['status'] not in TERMINAL:
+                task.update(status='CANCELLED', reason='USER_CANCELLED')
+                if task['mode'] == real.MODE:
+                    real.interrupt_request(db, task)
+                    task['activation_revoked'] = True
+                    if any(r['state'] == 'UNCERTAIN' for r in task['requests']):
+                        task['reason'] = 'USER_CANCELLED_REQUEST_UNCERTAIN'
+                event(task, 'cancelled', 'Cancellation committed; no new step may start.')
+                self._put(db, task)
         return self.get(identifier)
 
 
@@ -141,7 +152,7 @@ class Runner:
         self.store=store;self.decider=decider or OfflineDecider();self.fault=fault or (lambda *_:None)
 
     def recover(self):
-        for row in self.store.pending():
+        for row in self.store.pending(MODE):
             with self.store.lock,self.store.connection() as db:
                 t=self.store.get(row['id'])
                 if t['status'] in TERMINAL:continue
@@ -165,7 +176,7 @@ class Runner:
         # outside it, so cancel remains responsive. No retry on unknown requests.
         with self.store.lock,self.store.connection() as db:
             t=self.store.get(identifier)
-            if t['status'] in TERMINAL:return False
+            if t['status'] in TERMINAL or t['mode'] != MODE:return False
             if not self.compatible(t):
                 self._stop(db,t,'RECOVERY_POLICY_MISMATCH');return False
             if time.time()-t['created_at']>=t['budget']['seconds']:
@@ -262,35 +273,57 @@ class Manager:
         try:fcntl.flock(self.lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except OSError:
             self.lease.close();raise ValueError('TASK_STORE_ALREADY_OWNED') from None
-        self.runner=Runner(self.store);self.runner.recover();self.closed=threading.Event()
-        self.thread=threading.Thread(target=self._work,daemon=True);self.thread.start()
+        from .real import Coordinator
+        try:
+            self.coordinator = Coordinator(self.store)
+            self.coordinator.boot()
+            self.runner = Runner(self.store)
+            self.runner.recover()
+            self.closed = threading.Event()
+            self.thread = threading.Thread(target=self._work, daemon=True)
+            self.thread.start()
+        except BaseException:
+            self.lease.close()
+            raise
 
     def _work(self):
         while not self.closed.wait(.15):
-            for row in self.store.pending():
-                if self.closed.is_set():break
-                if row['status'] not in TERMINAL:
-                    try:self.runner.step(row['id'])
-                    except Exception:
-                        # No blind retries after unexpected infrastructure failure.
-                        with self.store.lock,self.store.connection() as db:
-                            t=self.store.get(row['id'])
-                            if t['status'] not in TERMINAL:self.runner._stop(db,t,'INTERNAL_ERROR')
+            self.coordinator.tick()
+            for row in self.store.pending(MODE):
+                if self.closed.is_set():
+                    break
+                try:
+                    self.runner.step(row['id'])
+                except Exception:
+                    with self.store.transaction() as db:
+                        task = self.store.get(row['id'])
+                        if task['status'] not in TERMINAL:
+                            self.runner._stop(db, task, 'INTERNAL_ERROR')
 
     def close(self):
-        self.closed.set();self.thread.join(timeout=5)
-        fcntl.flock(self.lease,fcntl.LOCK_UN);self.lease.close()
+        self.closed.set()
+        self.thread.join(timeout=5)
+        try:
+            self.coordinator.shutdown()
+        finally:
+            self.lease.close()
 
 
 def markdown(t):
     from ..export import plain
-    out=['# Offline investigation · '+MODE,'',t['id'],'','Goal: '+plain(t['goal']),
+    out=['# Offline investigation · '+t['mode'],'',t['id'],'','Goal: '+plain(t['goal']),
          'Status: '+t['status']+' · '+str(t['reason']),'',
          'Input SHA-256: '+t['identity']['input_sha256'],'View SHA-256: '+t['identity']['view_sha256'],
          'Versions: '+json.dumps(t['identity']['revisions']),
-         'Policy: '+POLICY+' · Tools: '+TOOL_VERSION+' · Result: '+RESULT_VERSION,
+         'Policy: '+t['identity']['policy_version']+' · Tools: '+t['identity']['tool_version']+' · Result: '+t['identity']['result_version'],
          'Budget: '+json.dumps(t['budget'])+' · Usage: '+json.dumps(t['usage']),'',plain(t['notice']),
          '', 'No model called. Offline policy validates orchestration only. Citation validity is not correctness.','']
+    for request in t.get('requests', []):
+        out += ['', 'Mock request: ' + request['id'] + ' · ' + request['state'],
+                'Request body SHA-256: ' + request['request_body_sha256'],
+                'Simulated reservation: ' + plain(json.dumps(request['shared_spending']))]
+        for message in request.get('tool_messages', []):
+            out.append('Feedback tool call: ' + plain(message['tool_call_id']))
     for e in t['events']:out.append(str(e['seq'])+'. '+e['kind']+' · '+plain(e['summary']))
     for r in t['results']:
         out+=['','Tool: '+r['tool']+' · '+r['revision']+' · '+r['content_sha256'],plain(str(r['unknown']))]

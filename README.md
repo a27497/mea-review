@@ -50,6 +50,42 @@ workspaces** or in the classic task controls. Pending deterministic work can
 resume within its original deadline and budgets. A saved uncertain Mock send
 can be checked by read-only reconciliation.
 
+## Rehearse the controlled DeepSeek protocol
+
+Normal startup leaves provider execution disabled. The local rehearsal uses
+the DeepSeek Flash native tool-call format with a simulated transport.
+
+Start the workbench and the Mock worker in separate terminals with the same
+local database directory:
+
+~~~sh
+python3 -B -m mea serve --task-dir artifacts/provider-rehearsal
+python3 -B -m mea.investigation.provider_worker --mock --store artifacts/provider-rehearsal
+~~~
+
+In **Import & task controls**, choose an owned adapter case and review its
+snapshot. Expand **DeepSeek protocol rehearsal**, acknowledge the simulation
+and select **Create Mock provider task**. The two snapshots illustrate a
+conditional finding and a guarded counterexample. The task JSON contains
+the request hashes, observed tool results and simulated reservation states.
+
+The Mock scope binds the two frozen input digests, policy, model identifier,
+prompt and tool schema. It allows at most two distinct tasks and ten
+request intents per database. The worker reserves request, token and simulated
+cost capacity in one SQLite transaction before launch. A second worker cannot
+use the same store. Reopening a task does not create a new request.
+
+A prepared request interrupted before launch is recorded as NOT_SENT. An
+interrupted SENDING request is UNCERTAIN. Both retain their reservation.
+After restart the worker may process a saved response or deterministic
+feedback. It cannot reactivate a previous task or resend an uncertain request.
+
+All costs here are simulated. Live admission has no registered scope,
+production ledger or credential reader in this candidate. The wire adapter
+has no executable entry point and the test suite supplies a fake connection.
+Real activation requires a separately verified approval and the authoritative
+production spending ledger.
+
 ## Verify
 
 ~~~sh
@@ -69,7 +105,8 @@ for the classic and Review v3 browser checks.
 
 The tool and report engines come from MEA product checkpoint
 344acf0c8bd59157e81d03aa771547e2b330986e. Review v3 and the Mock review
-service come from checkpoint 5e8d91e5fd7678f93cda4f44632157395bfa2bdf.
+service come from checkpoint 5e8d91e5fd7678f93cda4f44632157395bfa2bdf. The native protocol, frozen paging
+and Mock rehearsal adapt checkpoint 3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4.
 All examples are self-owned synthetic fixtures. See the
 [source manifest](SOURCE-MANIFEST.tsv) and [third-party notices](THIRD_PARTY_NOTICES.md).
 

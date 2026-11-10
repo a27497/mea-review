@@ -5,14 +5,14 @@ from pathlib import Path
 from .contract import MAX_BYTES, decode, validate
 from .human_review import api as human_api
 from .human_review.service import Service
-from .investigation import tasks
+from .investigation import real, real_protocol, tasks
 from .investigation.decision import GOAL
 from .investigation.tools import View
 from .review import review
 from .export import markdown
 
 ROOT = Path(__file__).resolve().parents[1]
-DEMOS = ROOT / 'fixtures/demo'
+DEMOS = (ROOT / 'fixtures/demo', ROOT / 'fixtures/investigation/phase3')
 WEB = ROOT / 'web'
 
 
@@ -58,6 +58,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, (WEB / filename).read_bytes(), kind)
         if self.path.startswith('/api/human/'):
             return human_api.get_request(self)
+        if self.path == '/api/investigation-provider':
+            return self.send(200, real.readiness(self.server.investigations.store))
         if self.path == '/api/tasks':
             return self.send(200, self.server.investigations.store.list())
         for prefix in ('/api/task/', '/api/task-export/', '/api/task-json/'):
@@ -71,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, task if prefix == '/api/task-json/' else tasks.public(task))
         prefix = '/api/demo/'
         if self.path == '/api/demos' or self.path.startswith(prefix):
-            demos = [validate(decode(p.read_bytes())) for p in sorted(DEMOS.glob('*.json'))]
+            demos = [validate(decode(p.read_bytes())) for folder in DEMOS for p in sorted(folder.glob('*.json'))]
             if self.path == '/api/demos':
                 return self.send(200, [dict(id=d['id'], title=d['pr']['title']) for d in demos])
             for demo in demos:
@@ -116,7 +118,22 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('CANCEL_BODY')
             identifier = self.path.removeprefix('/api/task-cancel/')
             return self.send(200, tasks.public(store.cancel(identifier)))
-        if not isinstance(data, dict) or 'snapshot' not in data or set(data) - {'snapshot', 'goal', 'budget'}:
+        if not isinstance(data, dict) or 'snapshot' not in data:
+            raise ValueError('FROZEN_INPUT_ONLY')
+        mode = data.get('mode', tasks.MODE)
+        if mode == 'REAL_AI':
+            return self.send(403, {'error': 'LIVE_ADMISSION_NOT_CONFIGURED'})
+        if mode == real.MODE:
+            if set(data) - {'snapshot', 'goal', 'budget', 'mode', 'confirmed', 'context_limits'}:
+                raise ValueError('FROZEN_INPUT_ONLY')
+            try:
+                task = real.create(store, data['snapshot'], data.get('goal', real_protocol.GOAL),
+                                   data.get('budget'), confirmed=data.get('confirmed', False),
+                                   context_limits=data.get('context_limits'))
+            except ValueError as exc:
+                return self.send(400, {'error': str(exc)})
+            return self.send(200, tasks.public(task))
+        if mode != tasks.MODE or set(data) - {'snapshot', 'goal', 'budget', 'mode'}:
             raise ValueError('FROZEN_INPUT_ONLY')
         view = View.from_input(data['snapshot'])
         task = store.create(view, data.get('goal', GOAL), data.get('budget'), {'kind': 'VALIDATED_SNAPSHOT'})

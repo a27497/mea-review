@@ -69,7 +69,17 @@ class View:
                line=line,quote=rows[line-1],content_sha256=s['sha256'],blob_sha=s['blob_sha'])
         return dict(id='ev-'+digest(c),**c)
 
-    def execute(self, name, args):
+    tool_version = TOOL_VERSION
+    limits = LIMITS
+
+    @staticmethod
+    def validate_range(start, end):
+        if (type(start) is not int or type(end) is not int or not 1 <= start <= end <= LIMITS['lines']
+                or end - start >= LIMITS['snippet_lines']):
+            raise ValueError('SNIPPET_BOUND')
+
+    def validate_call(self, name, args):
+        """Validate capabilities without reading source or incrementing tool work."""
         permitted={
             'read_diff':{'path','revision'}, 'read_source':{'path','revision','start','end'},
             'read_test':{'path','revision','start','end'}, 'find_symbol':{'symbol','revision'},
@@ -78,7 +88,24 @@ class View:
             raise ValueError('TOOL_NOT_ALLOWED_OR_ARGUMENTS')
         sides=[s for s in ['base','head'] if self.value['revisions'][s]==args['revision']]
         if len(sides)!=1:raise ValueError('TOOL_VERSION_MISMATCH')
-        side=sides[0];refs=[];data=[];truncated=False;unknown=[]
+        if 'path' in args:
+            path=safe_path(args['path'])
+            if name in {'read_source','read_test'}:
+                start,end=args['start'],args['end']
+                self.validate_range(start, end)
+                if name=='read_test' and not (path.endswith('.py') and (path.split('/')[-1].startswith('test_') or path.endswith('_test.py'))):
+                    raise ValueError('TEST_PATH_REQUIRED')
+        else:
+            needle=args.get('query',args.get('symbol'))
+            if not isinstance(needle,str) or not 1<=len(needle.encode())<=100 or '\n' in needle:
+                raise ValueError('QUERY_BOUND')
+            if name!='search' and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]{0,79}',needle):
+                raise ValueError('PYTHON_SYMBOL_REQUIRED')
+        return sides[0]
+
+    def execute(self, name, args):
+        side = self.validate_call(name, args)
+        refs=[];data=[];truncated=False;unknown=[]
         if 'path' in args:
             path=safe_path(args['path'])
             source=self.sources.get((side,path))
@@ -93,10 +120,6 @@ class View:
                             refs.append(self.citation(s,p,n))
             else:
                 start,end=args['start'],args['end']
-                if type(start) is not int or type(end) is not int or not 1<=start<=end<=LIMITS['lines'] or end-start>=LIMITS['snippet_lines']:
-                    raise ValueError('SNIPPET_BOUND')
-                if name=='read_test' and not (path.endswith('.py') and (path.split('/')[-1].startswith('test_') or path.endswith('_test.py'))):
-                    raise ValueError('TEST_PATH_REQUIRED')
                 if source is None:unknown.append('SOURCE_NOT_COLLECTED')
                 else:
                     rows=source['text'].splitlines()
@@ -106,10 +129,6 @@ class View:
                         data=[dict(line=r['line'],text=r['quote']) for r in refs]
         else:
             needle=args.get('query',args.get('symbol'))
-            if not isinstance(needle,str) or not 1<=len(needle.encode())<=100 or '\n' in needle:
-                raise ValueError('QUERY_BOUND')
-            if name!='search' and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]{0,79}',needle):
-                raise ValueError('PYTHON_SYMBOL_REQUIRED')
             for (s,path),source in sorted(self.sources.items()):
                 if s!=side:continue
                 lines=[]
@@ -127,8 +146,8 @@ class View:
                     if len(refs)>=LIMITS['hits']:truncated=True;break
                     refs.append(self.citation(side,path,n))
             data=[dict(path=r['path'],line=r['line'],text=r['quote']) for r in refs]
-        result=dict(tool=name,tool_version=TOOL_VERSION,view_sha256=self.sha256,revision=args['revision'],
-                    data=data,evidence=refs,unknown=unknown,coverage='COLLECTED_FILES_ONLY',truncated=truncated,limits=LIMITS,notice=NOTICE)
+        result=dict(tool=name,tool_version=self.tool_version,view_sha256=self.sha256,revision=args['revision'],
+                    data=data,evidence=refs,unknown=unknown,coverage='COLLECTED_FILES_ONLY',truncated=truncated,limits=self.limits,notice=NOTICE)
         result['content_sha256']=digest(result)
         if len(canonical(result))>LIMITS['result_bytes']:
             # No partial citation or silent clipped source. Return explicit insufficiency.

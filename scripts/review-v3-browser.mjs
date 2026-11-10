@@ -121,12 +121,13 @@ try {
     assert.equal(response.status(), 200);
     return response.json();
   };
-  for (const route of ['/api/investigation-provider','/api/public-captures','/api/ai-runs']) {
+  for (const route of ['/api/public-captures','/api/ai-runs']) {
     assert.equal((await d.request.get(base + route)).status(), 404);
   }
   assert.equal((await d.request.post(base + '/api/public-capture', {data:{}})).status(), 404);
   assert.equal((await d.request.get(base + '/classic')).status(), 200);
   assert.equal((await data(d, '/api/human/status')).live_publish, false);
+  assert.equal((await data(d, '/api/investigation-provider')).real_enabled, false);
   await d.goto(base);
   await expect(d.locator('#intro')).toContainText('Review a frozen pull request');
   assert.deepEqual(await data(d, '/api/tasks'), []);

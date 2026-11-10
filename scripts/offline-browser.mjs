@@ -18,6 +18,7 @@ const checks = [];
 let server;
 let base;
 let browser;
+let providerWorker;
 
 async function start(port = 0) {
   server = spawn('python3', ['-B', '-m', 'mea', 'serve', '--port', String(port),
@@ -211,16 +212,49 @@ try {
   assert.deepEqual((await task(refutedId)).candidates, []);
   checks.push('Guarded synthetic counterexample refutes the hypothesis and returns no candidates.');
 
+  await $('provider-controls').locator('summary').click();
+  await expect($('provider-status')).toContainText('Real model calls are disabled');
+  await expect($('create-provider-task')).toBeDisabled();
+  await $('demo').selectOption({label: 'Owned offline source adapter case-a'});
+  await $('load').click();
+  await expect($('title')).toContainText('source adapter case-a');
+  await $('confirm-provider').check();
+  await expect($('create-provider-task')).toBeDisabled();
+  providerWorker = spawn('python3', ['-B', '-m', 'mea.investigation.provider_worker',
+    '--mock', '--store', evidence('task-db')], {cwd: root, stdio: 'ignore'});
+  await expect($('provider-status')).toContainText('Local Mock worker ready', {timeout: 15_000});
+  await expect($('create-provider-task')).toBeEnabled();
+  const admitted = page.waitForResponse(r => r.url() === base + '/api/tasks' && r.request().method() === 'POST');
+  await $('create-provider-task').click();
+  const mockId = (await (await admitted).json()).id;
+  await expect($('task-message')).toContainText(mockId);
+  await expect($('task-progress')).toContainText('COMPLETED · HYPOTHESIS_SUPPORTED', {timeout: 20_000});
+  const mockTask = await task(mockId, true);
+  assert.equal(mockTask.mode, 'MOCK_PROVIDER_NOT_AI');
+  assert.equal(mockTask.requests.length, 4);
+  assert.ok(mockTask.requests.every(r => r.receipt.http_posts_attempted === 0));
+  assert.equal(mockTask.results.length, 3);
+  assert.deepEqual(JSON.parse(await download('task-json', 'mock-provider-task.json')), mockTask);
+  await page.screenshot({path: evidence('mock-provider-mobile.png'), fullPage: true});
+  checks.push('Provider rehearsal stays disabled until the separate Mock worker and explicit confirmation are present.');
+  checks.push('The owned sample completes four simulated requests and exports three frozen tool results.');
+
   assert.deepEqual(external, []);
   assert.deepEqual(errors, []);
   const summary = {
     status: 'PASS', checks, provider: after.provider, externalBrowserRequests: external.length,
     browserErrors: errors.length, recoveredTask: resumedId, interruptedTools: before.results.length,
     finalStatus: after.status, finalReason: after.reason, finalUsage: after.usage,
+    mockProviderRequests: mockTask.requests.length, mockProviderRealPosts: 0,
   };
   await writeFile(evidence('summary.json'), JSON.stringify(summary, null, 2) + '\n');
   console.log(summary);
 } finally {
+  if (providerWorker?.exitCode === null && providerWorker?.signalCode === null) {
+    const exited = once(providerWorker, 'exit');
+    providerWorker.kill('SIGINT');
+    await exited;
+  }
   await browser?.close();
   await stop();
 }

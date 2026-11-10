@@ -19,6 +19,12 @@
       <label>Total seconds<input id="task-seconds" type="number" min="1" max="300" value="60"></label>
     </div>
     <button id="create-task" disabled>Create offline task from open frozen PR</button>
+    <details id="provider-controls"><summary>DeepSeek protocol rehearsal</summary>
+      <p id="provider-status" role="status">Real model calls are disabled.</p>
+      <p>Choose owned adapter case A or B and start the separate local Mock worker.</p>
+      <label><span><input id="confirm-provider" type="checkbox"> Start a simulated investigation of this frozen snapshot</span></label>
+      <button id="create-provider-task" disabled>Create Mock provider task</button>
+    </details>
     <p>Tasks save automatically. Identical input, versions, objective and limits reopen the same task, including a cancelled task. To create a separate experiment, change the objective label or limits. Only frozen collected files are available; missing source stays unknown.</p>
     <label>Saved tasks (latest 200)<select id="task-saved"><option value="">Choose a saved task</option></select></label><button id="open-task">Reopen task</button>
     <p id="task-message" role="status" aria-live="polite">Open a frozen snapshot to create a task.</p>

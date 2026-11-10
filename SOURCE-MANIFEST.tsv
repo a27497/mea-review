@@ -1,11 +1,13 @@
 Path	Source path	Source checkpoint	Role or adaptation
 .gitignore	New	Batch 1	Generated local state exclusions
-README.md	New	Batch 1	Document Review v3 and classic workbench flows
-SOURCE-MANIFEST.tsv	New	Batch 1 and 2	Explicit tracked file allowlist
+README.md	New	Batch 1	Document Review v3, classic flow and controlled provider rehearsal
+SOURCE-MANIFEST.tsv	New	Batch 1 to 3	Explicit tracked file allowlist
 THIRD_PARTY_NOTICES.md	New	Batch 2	Review v3 font notices and package dependency scope
 fixtures/demo/counterexample.json	fixtures/investigation/counterexample.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
 fixtures/demo/none-return.json	fixtures/investigation/none-return.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
 fixtures/demo/static-assertion.json	New	Batch 1	Synthetic static finding and citation fixture
+fixtures/investigation/phase3/case-a.json	fixtures/investigation/phase3/case-a.json	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact self-owned synthetic case
+fixtures/investigation/phase3/case-b.json	fixtures/investigation/phase3/case-b.json	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact self-owned guarded case
 fixtures/review/manifest.json	fixtures/review/manifest.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
 fixtures/review/v1.json	fixtures/review/v1.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
 fixtures/review/v2.json	fixtures/review/v2.json	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact self-owned frozen revision or version manifest
@@ -26,24 +28,37 @@ mea/human_review/publisher.py	mea/human_review/publisher.py	5e8d91e5fd7678f93cda
 mea/human_review/service.py	mea/human_review/service.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact review workspace and version history
 mea/human_review/store.py	mea/human_review/store.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact SQLite review records
 mea/investigation/__init__.py	mea/investigation/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/investigation/authorization.py	mea/investigation/authorization.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Replace historical authorization with simulation-only scoped admission
+mea/investigation/context_budget.py	mea/investigation/context_budget.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact context projection and admission bounds
 mea/investigation/decision.py	mea/investigation/decision.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
-mea/investigation/tasks.py	mea/investigation/tasks.py	344acf0c8bd59157e81d03aa771547e2b330986e	Add SQLite transaction and cross-process Mock review lock
-mea/investigation/tools.py	mea/investigation/tools.py	344acf0c8bd59157e81d03aa771547e2b330986e	Validate imported snapshots without collector dependency
-mea/investigation/validation.py	mea/investigation/validation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/investigation/envelope.py	mea/investigation/envelope.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact response structure and redaction
+mea/investigation/mock_provider.py	mea/investigation/mock_provider.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Deterministic Mock transport with cancellation and deadline handling
+mea/investigation/native.py	mea/investigation/native.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Native tool-call contract bound to byte-page tools
+mea/investigation/provider_view.py	mea/investigation/tools.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Port whole-line byte pages without changing legacy tool results
+mea/investigation/provider_worker.py	mea/investigation/provider_worker.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Mock-only worker with durable simulation reservations and fenced launch
+mea/investigation/real.py	mea/investigation/real.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Credential-free simulation admission, recovery and native coordination
+mea/investigation/real_protocol.py	mea/investigation/real_protocol.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact DeepSeek Flash native protocol
+mea/investigation/spending.py	mea/investigation/spending.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Simulation-only atomic budget ledger and durable uncertainty
+mea/investigation/tasks.py	mea/investigation/tasks.py	344acf0c8bd59157e81d03aa771547e2b330986e	Preserve v1 and coordinate scoped Mock work and restart on the same store
+mea/investigation/tools.py	mea/investigation/tools.py	344acf0c8bd59157e81d03aa771547e2b330986e	Share frozen tool permission validation while preserving v1 results
+mea/investigation/validation.py	mea/investigation/validation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Expose an explicit unobserved citation reason for provider investigations
+mea/investigation/wire.py	mea/investigation/wire.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Single-attempt wire adapter tested with injected connection and no live launcher
 mea/patch.py	mea/patch.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/review.py	mea/review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
-mea/server.py	mea/server.py	344acf0c8bd59157e81d03aa771547e2b330986e	Serve Review v3 and same-origin Mock routes alongside classic review
+mea/server.py	mea/server.py	344acf0c8bd59157e81d03aa771547e2b330986e	Expose read-only provider readiness and explicit Mock task admission
 package-lock.json	package-lock.json	344acf0c8bd59157e81d03aa771547e2b330986e	Pinned browser test dependencies retained
 package.json	New	Batch 1	Expose separate Review v3 browser verification
-scripts/offline-browser.mjs	New	Batch 1	Re-run the first batch browser workflow at the classic route
-scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Desktop and mobile browser acceptance with owned examples
+scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
+scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
+tests/test_controlled_investigation.py	tests/test_real_investigation.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Mock authorization, native tools, budget and fault regressions
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler
 tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained investigation regressions with local fixtures
+tests/test_provider_process.py	New	Batch 3	Product HTTP and real process-kill test using local Mock transport
 tests/test_review.py	tests/test_review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained static regressions with synthetic fixtures
-web/app.js	web/public-app.js	344acf0c8bd59157e81d03aa771547e2b330986e	Offline review, exports and frozen citation navigation
-web/index.html	web/public-index.html	344acf0c8bd59157e81d03aa771547e2b330986e	Link classic workbench to Review v3
+web/app.js	web/public-app.js	344acf0c8bd59157e81d03aa771547e2b330986e	Add Mock readiness polling, acknowledgement and task submission
+web/index.html	web/public-index.html	344acf0c8bd59157e81d03aa771547e2b330986e	Add local DeepSeek protocol rehearsal controls
 web/review-font/INTER-OFL.txt	web/review-font/INTER-OFL.txt	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
 web/review-font/PLEX-OFL.txt	web/review-font/PLEX-OFL.txt	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice
 web/review-font/inter.woff2	web/review-font/inter.woff2	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice

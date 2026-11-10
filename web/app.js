@@ -98,6 +98,7 @@ async function run(data) {
   const result = await (await request('/api/review', data, true)).json();
   snapshotText = typeof data === 'string' ? data : new TextDecoder('utf-8', {fatal: true}).decode(data);
   snapshot = JSON.parse(snapshotText);
+  $('confirm-provider').checked = false;
   report = result;
   $('source-panel').hidden = true;
   $('evidence').replaceChildren();
@@ -219,10 +220,11 @@ function taskSourceLink(savedTask, e) {
 
 // The investigation is independently cancellable while its worker runs. Polling
 // only reads persisted state; it never starts or repeats a decision/tool step.
-let task, taskTimer, taskRequest = 0;
+let task, taskTimer, taskRequest = 0, providerReady = false;
 const terminalTask = t => ['COMPLETED','STOPPED','CANCELLED'].includes(t.status);
 function syncTaskControls() {
   $('create-task').disabled = busy || !snapshot;
+  $('create-provider-task').disabled = busy || !snapshot || !providerReady || !$('confirm-provider').checked;
   $('cancel-task').disabled = !task || terminalTask(task);
 }
 async function refreshTasks() {
@@ -288,17 +290,48 @@ async function watchTask(id) {
     else await refreshTasks();
   } catch(error) { $('task-message').textContent='Task read failed: '+error.message+' Reopen the saved task after restarting the server.'; }
 }
-$('create-task').addEventListener('click', async () => {
-  $('create-task').disabled=true;
+async function createTask(options) {
   try {
-    const options={goal:$('task-goal').value,
-      budget:{rounds:Number($('task-rounds').value),tools:Number($('task-tools').value),output_bytes:Number($('task-bytes').value),seconds:Number($('task-seconds').value)}};
     const body = '{"snapshot":' + snapshotText + ',' + JSON.stringify(options).slice(1);
     const t = await (await request('/api/tasks', body, true)).json();
-    await refreshTasks(); $('task-saved').value=t.id; await watchTask(t.id);
-  } catch(error) { $('task-message').textContent='Task creation failed: '+error.message; }
-  finally { syncTaskControls(); }
+    await refreshTasks();
+    $('task-saved').value = t.id;
+    await watchTask(t.id);
+  } catch (error) {
+    $('task-message').textContent = 'Task creation failed: ' + error.message;
+  }
+}
+
+$('create-task').addEventListener('click', action(async () => {
+  await createTask({goal: $('task-goal').value, budget: {
+    rounds: Number($('task-rounds').value), tools: Number($('task-tools').value),
+    output_bytes: Number($('task-bytes').value), seconds: Number($('task-seconds').value),
+  }});
+}));
+
+async function refreshProvider() {
+  try {
+    providerReady = (await (await request('/api/investigation-provider')).json()).ready;
+  } catch {
+    providerReady = false;
+  }
+  $('provider-status').textContent = 'Real model calls are disabled. ' +
+    (providerReady ? 'Local Mock worker ready.' : 'Local Mock worker unavailable.');
+  syncTaskControls();
+}
+
+$('provider-controls').addEventListener('toggle', () => {
+  if ($('provider-controls').open) refreshProvider();
 });
+setInterval(() => {
+  if ($('provider-controls').open) refreshProvider();
+}, 1500);
+$('confirm-provider').addEventListener('change', syncTaskControls);
+$('create-provider-task').addEventListener('click', action(async () => {
+  if (!providerReady || !$('confirm-provider').checked) return;
+  $('confirm-provider').checked = false;
+  await createTask({mode: 'MOCK_PROVIDER_NOT_AI', confirmed: true});
+}));
 $('open-task').addEventListener('click', async () => {
   if($('task-saved').value) await watchTask($('task-saved').value);
 });

@@ -124,6 +124,17 @@ The estimator reserves simulated tokens before a request. The description remain
 untrusted input. The default request and the existing offline ReviewBench replay
 retain their original behavior.
 
+## Offline candidate verification
+
+`mea.investigation.verification` and `verification_v2` prepare a bounded
+request from a frozen snapshot and validate a supplied response. Version 2
+adds companion patches and Python definitions. The verifier checks cited rows
+against the frozen source. Its output keeps correctness unadjudicated and
+preserves refuted or insufficient candidates for inspection.
+
+The tests use synthetic snapshots and supplied responses. These modules do
+not launch a verification worker from the workbench.
+
 ## Scope and provenance
 
 The tool and report engines come from MEA product checkpoint

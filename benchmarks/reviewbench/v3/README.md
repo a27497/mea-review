@@ -4,6 +4,7 @@ Use a prepared blind packet from your private evidence storage. Its manifest
 pins the ordered candidate pages and referenced sources. Keep the original
 packet and its judge-only mapping separately. The reader checks packet hashes
 and keeps decisions in a separate owner draft.
+The browser and terminal serialize writes using a lock next to that draft.
 
 ```sh
 python3 -I -B benchmarks/reviewbench/v3/holdout_adjudicate.py serve --packet /path/to/packet --draft /path/to/owner-draft.json

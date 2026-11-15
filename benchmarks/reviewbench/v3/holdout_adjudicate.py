@@ -13,6 +13,7 @@ Each decision may carry evidence (path and line or line range) and a free-text r
 """
 import argparse
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import http.server
 import json
@@ -161,13 +162,28 @@ class Draft:
         self.path, self.packet = Path(path).resolve(), packet
         if packet.directory in self.path.parents or 'judge-only' in self.path.parts:
             raise Refused('DRAFT_LOCATION')
+        # The draft inode changes on replace, so writers share a separate stable lock.
+        self.lock_path = self.path.with_name(self.path.name + '.lock')
         if not self.path.exists():
-            now = datetime.now(timezone.utc).isoformat(timespec='seconds')
-            value = dict(schema=DRAFT_SCHEMA, tool_version=VERSION, packet_manifest_sha256=packet.manifest_sha256,
-                         created_at=now, updated_at=now, entries={cid: blank() for cid in packet.order})
-            with self.path.open('xb') as handle:
-                handle.write(canonical(value) + b'\n')
+            with self.lock_path.open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                if not self.path.exists():
+                    now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+                    value = dict(schema=DRAFT_SCHEMA, tool_version=VERSION, packet_manifest_sha256=packet.manifest_sha256,
+                                 created_at=now, updated_at=now, entries={cid: blank() for cid in packet.order})
+                    self._replace(value)
         self.load()
+
+    def _replace(self, value):
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix='.draft-')
+        try:
+            with os.fdopen(fd, 'wb') as handle:
+                handle.write(canonical(value) + b'\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.path)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
 
     def load(self):
         raw = self.path.read_bytes()
@@ -183,16 +199,14 @@ class Draft:
     def save(self, cid, entry):
         if cid not in self.packet.pages:
             raise Refused('DRAFT_UNKNOWN_PAGE')
-        self.load()
-        self.value['entries'][cid] = check_entry(entry)
-        self.value['updated_at'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix='.draft-')
-        with os.fdopen(fd, 'wb') as handle:
-            handle.write(canonical(self.value) + b'\n')
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, self.path)
-        return self.load()
+        entry = check_entry(entry)
+        with self.lock_path.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            value = self.load()
+            value['entries'][cid] = entry
+            value['updated_at'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            self._replace(value)
+            return self.load()
 
 
 # ----- local reader -----------------------------------------------------------------------------

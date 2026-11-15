@@ -1,5 +1,6 @@
 """Owner adjudication tool for the blind holdout packet. Synthetic packets and drafts only; no real decision,
 no network beyond a local pseudo-terminal, no model, credential or ledger."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import select
 import subprocess
 import sys
 import tempfile
+from threading import Event
 import time
 import unittest
 from unittest import mock
@@ -110,6 +112,46 @@ class PacketAndDraftTests(unittest.TestCase):
         self.assertEqual(set(draft.value['entries']), set(self.order))
         self.assertTrue(all(e == adj.blank() for e in draft.value['entries'].values()))
         self.assertEqual(adj.blank(), dict(decision='PENDING_OWNER', needs_outside_context=None, evidence=[], reason=''))
+
+    def test_overlapping_saves_keep_both_decisions(self):
+        packet = adj.Packet(self.packet_dir)
+        first = adj.Draft(self.root / 'draft.json', packet)
+        second = adj.Draft(first.path, packet)
+        first_id, second_id = self.order[:2]
+        entry = dict(decision='DEFECT', needs_outside_context=None, evidence=[], reason='owner')
+        first_ready, finish_first, second_started = Event(), Event(), Event()
+        replace = os.replace
+
+        def pause_first_replace(src, dest):
+            if not first_ready.is_set():
+                first_ready.set()
+                if not finish_first.wait(10):
+                    raise AssertionError('first save never released')
+            return replace(src, dest)
+
+        def save_second():
+            second_started.set()
+            return second.save(second_id, entry)
+
+        with mock.patch.object(adj.os, 'replace', side_effect=pause_first_replace):
+            with ThreadPoolExecutor(max_workers=2) as threads:
+                saving_first = threads.submit(first.save, first_id, entry)
+                try:
+                    self.assertTrue(first_ready.wait(5))
+                    saving_second = threads.submit(save_second)
+                    self.assertTrue(second_started.wait(5))
+                    try:
+                        saving_second.result(timeout=1)
+                    except TimeoutError:
+                        pass  # A serialized writer waits for the first commit.
+                finally:
+                    finish_first.set()
+                self.assertEqual(saving_first.result(timeout=5)['entries'][first_id], entry)
+                self.assertEqual(saving_second.result(timeout=5)['entries'][second_id], entry)
+
+        saved = adj.Draft(first.path, packet).load()
+        self.assertEqual(saved['entries'][first_id], entry)
+        self.assertEqual(saved['entries'][second_id], entry)
 
     def test_entry_rules(self):
         ok = dict(decision='INSUFFICIENT', needs_outside_context=False, evidence=[], reason='')

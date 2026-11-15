@@ -55,11 +55,13 @@ mea/investigation/native.py	mea/investigation/native.py	3b9c08d81735d8b55a48bc6f
 mea/investigation/provider_view.py	mea/investigation/tools.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Port whole-line byte pages without changing legacy tool results
 mea/investigation/provider_worker.py	mea/investigation/provider_worker.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Mock-only worker with durable simulation reservations and fenced launch
 mea/investigation/real.py	mea/investigation/real.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Port request options to the credential-free Mock coordinator
-mea/investigation/real_protocol.py	mea/investigation/real_protocol.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Bounded opt-in first-turn input and request contract
+mea/investigation/real_protocol.py	mea/investigation/real_protocol.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Bounded provider request profiles and tool-free verification request fields
 mea/investigation/spending.py	mea/investigation/spending.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Simulation-only atomic budget ledger and durable uncertainty
 mea/investigation/tasks.py	mea/investigation/tasks.py	344acf0c8bd59157e81d03aa771547e2b330986e	Preserve v1 and coordinate scoped Mock work and restart on the same store
 mea/investigation/tools.py	mea/investigation/tools.py	344acf0c8bd59157e81d03aa771547e2b330986e	Share frozen tool permission validation while preserving v1 results
 mea/investigation/validation.py	mea/investigation/validation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Expose an explicit unobserved citation reason for provider investigations
+mea/investigation/verification.py	mea/investigation/verification.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Frozen-evidence candidate verification packet and response validation
+mea/investigation/verification_v2.py	mea/investigation/verification_v2.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Verification v2 and v2.1 definitions, companion patches and citation checks
 mea/investigation/wire.py	mea/investigation/wire.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Single-attempt wire adapter tested with injected connection and no live launcher
 mea/patch.py	mea/patch.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/review.py	mea/review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
@@ -76,6 +78,8 @@ tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa
 tests/test_provider_process.py	New	Batch 3	Product HTTP and real process-kill test using local Mock transport
 tests/test_review.py	tests/test_review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained static regressions with synthetic fixtures
 tests/test_reviewbench_offline.py	New	Batch 4	Regression coverage for freeze, anchors, C1 grid and arithmetic
+tests/test_verification.py	tests/test_verification.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic cases adapted to the current repository contract and provider view
+tests/test_verification_v2.py	tests/test_verification_v2.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic v2 and v2.1 contract and citation regressions
 web/app.js	web/public-app.js	344acf0c8bd59157e81d03aa771547e2b330986e	Add Mock readiness polling, acknowledgement and task submission
 web/index.html	web/public-index.html	344acf0c8bd59157e81d03aa771547e2b330986e	Add local DeepSeek protocol rehearsal controls
 web/review-font/INTER-OFL.txt	web/review-font/INTER-OFL.txt	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Google Fonts v20 font or corresponding OFL 1.1 notice

@@ -97,8 +97,8 @@ def pull_request_text(pr,limit):
 
 # Opt-in thinking for requests without tools. With thinking on, the provider rejects a
 # required or named tool_choice and needs reasoning_content replayed in tool conversations,
-# so tool requests keep it disabled. Whether reasoning tokens count against max_tokens is
-# unverified, so a thinking request reserves a 16,000-token output bound.
+# so tool requests keep it disabled. Reasoning tokens count against max_tokens (see the
+# effort profiles below), so a thinking request reserves its whole output bound.
 THINKING_ENABLED=dict(type='enabled')
 THINKING_DISABLED=dict(type='disabled')
 THINKING_OUTPUT_TOKENS=16000
@@ -106,11 +106,25 @@ RESPONSE_BYTES=64000
 # Reasoning arrives in the response body and is dropped before the receipt leaves the
 # sending child, but the child must still read it whole.
 THINKING_RESPONSE_BYTES=262144
+# Opt-in reasoning effort. max_tokens counts reasoning (measured: every truncated thinking
+# review of the section 5 run had completion_tokens == max_tokens), and without the field the
+# provider uses effort high. A profile names the effort and its output bound together; a
+# thinking request without the field keeps the 16,000-token default above, byte for byte.
+THINKING_LOW='thinking-low-16k-v1'
+THINKING_HIGH_64K='thinking-high-64k-v1'
+THINKING_EFFORTS={THINKING_LOW:dict(reasoning_effort='low',max_tokens=16000),
+                  THINKING_HIGH_64K:dict(reasoning_effort='high',max_tokens=65536)}
+# About 4.3 response bytes per completion token were observed, so 65,536 tokens need more
+# than the 262,144 bytes that suffice for 16,000.
+THINKING_LONG_RESPONSE_BYTES=524288
 
 
-def thinking(enabled):
-    """Request fields of a tool-free request with thinking on or off."""
+def thinking(enabled,effort=None):
+    """Request fields of a tool-free request with thinking on or off, optionally with an effort profile."""
     if type(enabled) is not bool:raise ValueError('THINKING_CHOICE')
+    if effort is not None:
+        if not enabled or effort not in THINKING_EFFORTS:raise ValueError('THINKING_EFFORT_PROFILE')
+        return dict(thinking=dict(THINKING_ENABLED),**THINKING_EFFORTS[effort])
     if enabled:return dict(thinking=dict(THINKING_ENABLED),max_tokens=THINKING_OUTPUT_TOKENS)
     return dict(thinking=dict(THINKING_DISABLED),max_tokens=OUTPUT_TOKENS)
 
@@ -119,15 +133,27 @@ def thinks(body):
     return isinstance(body,dict) and body.get('thinking')==THINKING_ENABLED
 
 
+def thinking_effort(body):
+    """Effort profile a thinking request carries, None for the default. Raises on any other pairing."""
+    if 'reasoning_effort' not in body:return None
+    for name,fields in THINKING_EFFORTS.items():
+        if body['reasoning_effort']==fields['reasoning_effort'] and body.get('max_tokens')==fields['max_tokens']:return name
+    raise ValueError('THINKING_EFFORT_PROFILE')
+
+
 def check_thinking(body):
-    """A request with thinking on carries no tools or tool_choice, and the thinking output bound."""
-    if not thinks(body):return
+    """A request with thinking on carries no tools or tool_choice, and the output bound of its effort profile."""
+    if not thinks(body):
+        if isinstance(body,dict) and 'reasoning_effort' in body:raise ValueError('THINKING_EFFORT_REQUIRES_THINKING')
+        return
     if 'tools' in body or 'tool_choice' in body:raise ValueError('THINKING_REQUIRES_TOOL_FREE_REQUEST')
-    if body.get('max_tokens')!=THINKING_OUTPUT_TOKENS:raise ValueError('THINKING_OUTPUT_BOUND')
+    if thinking_effort(body) is None and body.get('max_tokens')!=THINKING_OUTPUT_TOKENS:raise ValueError('THINKING_OUTPUT_BOUND')
 
 
 def response_bytes(body):
-    return THINKING_RESPONSE_BYTES if thinks(body) else RESPONSE_BYTES
+    if not thinks(body):return RESPONSE_BYTES
+    long=type(body.get('max_tokens')) is int and body['max_tokens']>THINKING_OUTPUT_TOKENS
+    return THINKING_LONG_RESPONSE_BYTES if long else THINKING_RESPONSE_BYTES
 
 
 # Opt-in Agent budget. A task selects it through identity['agent_budget']: the product's six
@@ -135,10 +161,20 @@ def response_bytes(body):
 # reads paged at 120 lines. The 24,000-byte tool result bound still applies and usually ends
 # a read first. Tasks that do not ask keep their budget and unpaged reads.
 AGENT_BUDGET='agent-budget-6r-8t-120l-200k-v1'
-AGENT_BUDGETS={AGENT_BUDGET:dict(rounds=6,tools=8,tokens=200000,read_lines=120)}
+# v2 keeps v1's limits but applies the 24,000-byte bound to the model-visible form of a page
+# (tools.visible_bytes). Under v1 the stored form ends every read of ordinary source at 41 to 47
+# lines, so its 120-line page is never reached; under v2 a 120-line page fits.
+AGENT_BUDGET_V2='agent-budget-6r-8t-120l-200k-v2'
+AGENT_BUDGETS={AGENT_BUDGET:dict(rounds=6,tools=8,tokens=200000,read_lines=120),
+               AGENT_BUDGET_V2:dict(rounds=6,tools=8,tokens=200000,read_lines=120,read_bytes='MODEL_VISIBLE')}
 READ_PAGE_NOTE='''
 Source and test reads return at most {lines} lines per page, within the serialized byte bound. PAGE_LIMIT is an
 intentional page boundary with a continuation; follow it only when the next lines are needed for a specific claim.
+'''
+READ_PAGE_VISIBLE_NOTE='''
+Source and test reads return at most {lines} lines per page. Their 24000-byte bound counts the rows you see (line,
+evidence ID and quote) and the read metadata, so ordinary source reaches PAGE_LIMIT first and very long lines end a
+page with BYTE_LIMIT. Both carry a continuation; follow it only when the next lines are needed for a specific claim.
 '''
 
 
@@ -163,6 +199,12 @@ def read_line_limit(task):
     return profile['read_lines'] if profile else None
 
 
+def read_byte_basis(task):
+    """Byte basis of a task's source and test pages: None (stored form) unless its profile names one."""
+    profile=agent_budget(task)
+    return profile.get('read_bytes') if profile else None
+
+
 def task_prompt(task):
     if task.get('arm') == 'agent_bounded':
         base=C1_BOUNDED_PROMPT
@@ -170,7 +212,9 @@ def task_prompt(task):
     profile=first_turn(task)
     prompt=base+PR_TEXT_NOTE if profile and profile['pull_request'] else base
     reads=agent_budget(task)
-    return prompt+READ_PAGE_NOTE.format(lines=reads['read_lines']) if reads else prompt
+    if not reads:return prompt
+    note=READ_PAGE_VISIBLE_NOTE if reads.get('read_bytes') else READ_PAGE_NOTE
+    return prompt+note.format(lines=reads['read_lines'])
 
 
 def terminal_tools():

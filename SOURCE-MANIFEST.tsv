@@ -1,6 +1,6 @@
 Path	Source path	Source checkpoint	Role or adaptation
 .gitignore	New	Batch 1	Generated local state exclusions
-README.md	New	Batch 1 to 4	Review v3, classic flow, controlled provider rehearsal and offline benchmark
+README.md	New	New	Request profiles and existing workbench instructions
 SOURCE-MANIFEST.tsv	New	Batch 1 to 4	Explicit tracked file allowlist
 THIRD_PARTY_NOTICES.md	New	Batch 2 to 4	Notices for Review v3 fonts, package dependency scope and MIT benchmark material
 benchmarks/reviewbench/METHOD.md	benchmarks/reviewbench/protocol.md + benchmarks/reviewbench/v2/protocol.md	e41bf60796c4ddae54566388636dd943ac623465	Evidence comparison and scoring method with historical C1 boundary
@@ -47,15 +47,15 @@ mea/human_review/service.py	mea/human_review/service.py	5e8d91e5fd7678f93cda4f44
 mea/human_review/store.py	mea/human_review/store.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact SQLite review records
 mea/investigation/__init__.py	mea/investigation/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/investigation/authorization.py	mea/investigation/authorization.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Replace historical authorization with simulation-only scoped admission
-mea/investigation/context_budget.py	mea/investigation/context_budget.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact context projection and admission bounds
+mea/investigation/context_budget.py	mea/investigation/context_budget.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Opt-in calibrated reservation with the existing default
 mea/investigation/decision.py	mea/investigation/decision.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/investigation/envelope.py	mea/investigation/envelope.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact response structure and redaction
 mea/investigation/mock_provider.py	mea/investigation/mock_provider.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Deterministic Mock transport with cancellation and deadline handling
 mea/investigation/native.py	mea/investigation/native.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Native tool-call contract bound to byte-page tools
 mea/investigation/provider_view.py	mea/investigation/tools.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Port whole-line byte pages without changing legacy tool results
 mea/investigation/provider_worker.py	mea/investigation/provider_worker.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Mock-only worker with durable simulation reservations and fenced launch
-mea/investigation/real.py	mea/investigation/real.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Credential-free simulation admission, recovery and native coordination
-mea/investigation/real_protocol.py	mea/investigation/real_protocol.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact DeepSeek Flash native protocol
+mea/investigation/real.py	mea/investigation/real.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Port request options to the credential-free Mock coordinator
+mea/investigation/real_protocol.py	mea/investigation/real_protocol.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Bounded opt-in first-turn input and request contract
 mea/investigation/spending.py	mea/investigation/spending.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Simulation-only atomic budget ledger and durable uncertainty
 mea/investigation/tasks.py	mea/investigation/tasks.py	344acf0c8bd59157e81d03aa771547e2b330986e	Preserve v1 and coordinate scoped Mock work and restart on the same store
 mea/investigation/tools.py	mea/investigation/tools.py	344acf0c8bd59157e81d03aa771547e2b330986e	Share frozen tool permission validation while preserving v1 results
@@ -69,7 +69,7 @@ package.json	New	Batch 1	Expose separate Review v3 browser verification
 scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
-tests/test_controlled_investigation.py	tests/test_real_investigation.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Mock authorization, native tools, budget and fault regressions
+tests/test_controlled_investigation.py	tests/test_real_investigation.py	New	Existing simulation tests plus request-profile regressions
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler
 tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained investigation regressions with local fixtures

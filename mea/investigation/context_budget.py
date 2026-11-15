@@ -5,10 +5,18 @@ retain complete native call/reply pairs, never fabricated assistant messages.
 """
 import copy
 import json
+import re
 from ..contract import canonical, digest
 
 VERSION='mea-context-window-v1'
 ESTIMATOR='utf8-byte-ceiling-plus-25pct-framing-v1'
+# Opt-in estimator. Hundredths of a token per character, fitted to provider-reported
+# prompt tokens of recorded requests and raised until none of them was under-reserved.
+CALIBRATED='char-class-calibrated-v1'
+ESTIMATORS=(ESTIMATOR,CALIBRATED)
+RATES=dict(plain=40,hex=85,non_ascii=300)
+PER_MESSAGE=16
+HEX_RUN=re.compile('[0-9a-f]{16,}')
 PROFILE=dict(model='deepseek-flash',context_tokens=1000000,headroom_tokens=65536,
              source='https://api-docs.deepseek.com/quick_start/pricing/',verified='2026-11-08')
 DEFAULTS=dict(serialized_bytes=1048576,input_tokens=128000,recent_batches=2)
@@ -30,11 +38,27 @@ def config(value=None):
     return result
 
 
-def identity(value=None):
-    return dict(version=VERSION,estimator=ESTIMATOR,profile=copy.deepcopy(PROFILE),limits=config(value))
+def identity(value=None,estimator=ESTIMATOR):
+    if estimator not in ESTIMATORS:raise ValueError('CONTEXT_ESTIMATOR')
+    return dict(version=VERSION,estimator=estimator,profile=copy.deepcopy(PROFILE),limits=config(value))
 
 
-def estimate(body):
+def local(estimator):
+    """Host-side accounting choice. It is recorded with the task and never sent to the model."""
+    if estimator not in ESTIMATORS:raise ValueError('CONTEXT_ESTIMATOR')
+    return dict(estimator=estimator)
+
+
+def estimator_of(task):
+    return task['identity'].get('local_accounting',{}).get('estimator',ESTIMATOR)
+
+
+def calibrated_tokens(classes,messages):
+    """The calibrated input estimate from character-class counts alone."""
+    return (RATES['plain']*classes['plain']+RATES['hex']*classes['hex']+RATES['non_ascii']*classes['non_ascii_bytes']+99)//100+PER_MESSAGE*messages
+
+
+def estimate(body,estimator=ESTIMATOR):
     # Official char/token ratios are approximate, particularly for code. With no
     # verified model-matching local tokenizer, reserve one token per UTF-8 byte
     # of model-visible strings/schema, plus 25%, 1024 and 64/message for framing.
@@ -49,8 +73,22 @@ def estimate(body):
     ceiling=(visible*5+3)//4+1024+64*len(body['messages'])
     chars=''.join(strings)
     hint=(sum(3 if ord(c)<128 else 6 if 0x3400<=ord(c)<=0x9fff else 10*len(c.encode()) for c in chars)+9)//10
-    return dict(method=ESTIMATOR,input_reservation=ceiling,visible_utf8_bytes=visible,
-                character_hint_tokens=hint,margin='25% + 1024 + 64/message; hint never used for admission',
+    if estimator==ESTIMATOR:
+        return dict(method=ESTIMATOR,input_reservation=ceiling,visible_utf8_bytes=visible,
+                    character_hint_tokens=hint,margin='25% + 1024 + 64/message; hint never used for admission',
+                    exact_tokenizer=False)
+    if estimator!=CALIBRATED:raise ValueError('CONTEXT_ESTIMATOR')
+    # ASCII text cost about 0.29 tokens per character in recorded requests and long
+    # lowercase hex runs (commit ids, digests) about 0.64. Both rates carry a margin,
+    # non-ASCII is charged per UTF-8 byte, and a provider report above the
+    # reservation still stops the task. Still an estimate, never a tokenizer.
+    hexed=sum(len(m.group()) for m in HEX_RUN.finditer(chars))
+    wide=[c for c in chars if ord(c)>=128]
+    plain=len(chars)-hexed-len(wide)
+    classes=dict(plain=plain,hex=hexed,non_ascii=len(wide),non_ascii_bytes=sum(len(c.encode()) for c in wide))
+    return dict(method=CALIBRATED,input_reservation=calibrated_tokens(classes,len(body['messages'])),visible_utf8_bytes=visible,
+                byte_ceiling=ceiling,character_classes=classes,
+                margin='0.40/char, 0.85/hex-run char, 3/non-ASCII byte, 16/message; provider usage above it stops the task',
                 exact_tokenizer=False)
 
 
@@ -80,7 +118,7 @@ def expanded_feedback(body):
     return result
 
 
-def project(initial,batches,body_base,limits,available_tokens,output_tokens):
+def project(initial,batches,body_base,limits,available_tokens,output_tokens,estimator=ESTIMATOR):
     """Pressure removes oldest whole batches' quotes explicitly, recent stays intact.
 
     Older native pairs are folded into a host observation index, not an assistant
@@ -127,7 +165,7 @@ def project(initial,batches,body_base,limits,available_tokens,output_tokens):
             ctx['initial_diffs']=[dict(path=d['path'],omission='CONTEXT_PRESSURE; original diff retained in frozen input',content_sha256=digest(d['diff'].encode())) if 'diff' in d else d for d in ctx['initial_diffs']]
         body=dict(body_base,messages=[dict(role='system',content=body_base['_prompt']),dict(role='user',content=canonical(ctx).decode())]+messages)
         del body['_prompt']
-        usage=estimate(body);size=len(canonical(body));allowed=min(cfg['input_tokens'],PROFILE['context_tokens']-PROFILE['headroom_tokens']-output_tokens, max(0,available_tokens-output_tokens))
+        usage=estimate(body,estimator);size=len(canonical(body));allowed=min(cfg['input_tokens'],PROFILE['context_tokens']-PROFILE['headroom_tokens']-output_tokens, max(0,available_tokens-output_tokens))
         manifest=dict(version=VERSION,config=cfg,model_profile=PROFILE,estimation=usage,input_token_limit=allowed,
                       output_tokens_reserved=output_tokens,serialized_bytes=size,serialized_byte_limit=cfg['serialized_bytes'],
                       retained_native_call_ids=retained_ids,folded_call_ids=folded_ids,omitted_quote_batches=sorted(omitted),

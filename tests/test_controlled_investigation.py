@@ -12,7 +12,7 @@ from mea.contract import canonical,decode,digest
 from mea.investigation.tasks import Store,TERMINAL,public,markdown
 from mea.investigation.provider_view import View
 from mea.investigation.real import Coordinator,create,readiness,meta,put_meta
-from mea.investigation import authorization, envelope, real_protocol as p, spending
+from mea.investigation import authorization, context_budget, envelope, real_protocol as p, spending
 from mea.investigation.provider_worker import Broker
 from mea.investigation.mock_provider import Sender
 from mea.investigation.decision import stop,tool
@@ -60,6 +60,30 @@ class ControlledInvestigationTests(unittest.TestCase):
         self.assertIn('is None',json.dumps(b['requests'][-1]['request_body']))
         self.assertNotIn('is None',json.dumps(a['requests'][-1]['request_body']))
         self.assertIn('MOCK_PROVIDER_NOT_AI',markdown(a))
+
+    def test_request_profiles_are_opt_in_for_the_existing_offline_worker(self):
+        default_task = self.new()
+        opted_task = self.new(first_turn=p.FIRST_TURN, estimator=context_budget.CALIBRATED)
+        default_body, _, default_manifest = p.prepare_request(default_task)
+        self.assertNotIn('pull_request', json.loads(default_body['messages'][1]['content']))
+        self.assertEqual(default_manifest['estimation']['method'], context_budget.ESTIMATOR)
+
+        result = self.drive(opted_task)
+        self.assertEqual(result['reason'], 'HYPOTHESIS_SUPPORTED')
+        self.assertEqual(result['provider'], 'MOCK_NO_NETWORK')
+        request = result['requests'][0]
+        context = json.loads(request['request_body']['messages'][1]['content'])
+        self.assertEqual(context['pull_request'], p.pull_request_text(result['pr'], 4000))
+        report = request['context_manifest']['estimation']
+        self.assertEqual(report['method'], context_budget.CALIBRATED)
+        self.assertEqual(request['token_reservation'], report['input_reservation'] + p.OUTPUT_TOKENS)
+
+    def test_unknown_request_profiles_fail_before_task_creation(self):
+        with self.assertRaisesRegex(ValueError, 'CONTEXT_ESTIMATOR'):
+            self.new(estimator='unknown')
+        with self.assertRaisesRegex(ValueError, 'FIRST_TURN_PROFILE'):
+            self.new(first_turn='unknown')
+        self.assertEqual(self.store.list(), [])
 
     def test_native_batch_feedback_matches_each_call_id(self):
         def plan(ctx):

@@ -50,7 +50,7 @@ def status(db):
 
 
 def create(store, value, goal=protocol.GOAL, budget=None, *, mode=MODE, confirmed=False,
-           context_limits=None):
+           context_limits=None, estimator=None, first_turn=None):
     if mode == 'REAL_AI':
         raise ValueError('LIVE_ADMISSION_NOT_CONFIGURED')
     if mode != MODE or confirmed is not True:
@@ -62,6 +62,11 @@ def create(store, value, goal=protocol.GOAL, budget=None, *, mode=MODE, confirme
     b=protocol.budget(budget)
     identity=dict(view_sha256=view.sha256,input_sha256=view.value['input_sha256'],revisions=view.value['revisions'],policy_version=protocol.POLICY,
                   tool_version=TOOL_VERSION,result_version=RESULT_VERSION,budget=b,goal=goal,mode=MODE,authorization=authorization.GRANT,model=protocol.MODEL,prompt_sha256=protocol.PROMPT_SHA256,protocol_version=native.VERSION,tool_schema_sha256=native.SCHEMA_SHA256,context_policy=window.identity(context_limits))
+    if estimator is not None:
+        identity['local_accounting'] = window.local(estimator)
+    if first_turn is not None:
+        identity['first_turn'] = first_turn
+        protocol.first_turn(dict(identity=identity))
     authorization.validate_task(identity)
     with store.transaction() as db:
         ready = status(db)

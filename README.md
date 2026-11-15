@@ -114,6 +114,16 @@ The benchmark runs Static, Direct Mock and Agent Mock. The historical C1
 Main recomputation preserves PARTIAL and independent quality BLOCKED.
 [Replay guide and method](benchmarks/reviewbench/README.md)
 
+## Optional request profiles
+
+The local Mock investigation API supports a calibrated token estimate and a
+bounded first-turn view of the pull request title and description. Developers
+can opt in when calling `mea.investigation.real.create` with
+`estimator=context_budget.CALIBRATED` and `first_turn=real_protocol.FIRST_TURN`.
+The estimator reserves simulated tokens before a request. The description remains
+untrusted input. The default request and the existing offline ReviewBench replay
+retain their original behavior.
+
 ## Scope and provenance
 
 The tool and report engines come from MEA product checkpoint

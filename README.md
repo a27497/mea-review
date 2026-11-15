@@ -135,6 +135,10 @@ preserves refuted or insufficient candidates for inspection.
 The tests use synthetic snapshots and supplied responses. These modules do
 not launch a verification worker from the workbench.
 
+The [ReviewBench v3 adjudication guide](benchmarks/reviewbench/v3/README.md)
+covers reading an existing blind packet, recording decisions locally and
+reconciling the sealed decisions.
+
 ## Scope and provenance
 
 The tool and report engines come from MEA product checkpoint

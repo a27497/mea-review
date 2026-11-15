@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Holdout owner reader</title>
+<style>
+  body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
+  nav { width: 22em; overflow-y: auto; border-right: 1px solid #999; padding: .5em; box-sizing: border-box; }
+  main { flex: 1; overflow-y: auto; padding: 1em 1.5em; box-sizing: border-box; }
+  nav button { display: block; width: 100%; text-align: left; margin: 2px 0; font-family: monospace; font-size: 12px; }
+  nav button.current { outline: 2px solid #333; }
+  nav button.done { background: #e8e8e8; }
+  pre { background: #f6f6f6; padding: .5em; overflow-x: auto; font-size: 12px; white-space: pre; }
+  .untrusted { border: 1px dashed #a00; padding: .5em; white-space: pre-wrap; }
+  .cited { background: #fff2a8; }
+  .notice { color: #800; font-size: 13px; }
+  fieldset { margin-top: 1em; }
+  textarea { width: 100%; min-height: 4em; }
+  #status { margin-left: 1em; }
+</style>
+</head>
+<body>
+<nav id="list"></nav>
+<main>
+  <p class="notice">Offline reader. Every value shown comes from the frozen packet on this machine. Nothing is preselected.</p>
+  <div id="page"></div>
+  <fieldset id="form" hidden>
+    <legend>Owner decision for this page</legend>
+    <label><input type="radio" name="decision" value="DEFECT"> DEFECT: the frozen input shows the trigger and the consequence, and it is not intended behaviour</label><br>
+    <label><input type="radio" name="decision" value="NOT_A_DEFECT"> NOT_A_DEFECT: the frozen input shows it is intended, already handled, or the stated mechanism does not hold</label><br>
+    <label><input type="radio" name="decision" value="INSUFFICIENT"> INSUFFICIENT: the frozen input is not enough to decide</label><br>
+    <label>Needs code or schema outside the frozen input (only with INSUFFICIENT):
+      <select id="outside" disabled>
+        <option value="">not stated</option><option value="yes">yes</option><option value="no">no</option>
+      </select></label>
+    <p>Evidence, one per line as <code>path:line</code> or <code>path:start-end</code> (optional)</p>
+    <textarea id="evidence"></textarea>
+    <p>Reason (optional)</p>
+    <textarea id="reason"></textarea>
+    <p><button id="save">Save to draft</button><span id="status"></span></p>
+  </fieldset>
+</main>
+<script>
+'use strict';
+let order = [], draft = null, current = null, sources = {};
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+async function getJSON(path) { const r = await fetch(path, {cache: 'no-store'}); if (!r.ok) throw new Error(path + ' ' + r.status); return r.json(); }
+
+function renderList() {
+  const nav = document.getElementById('list'); nav.replaceChildren();
+  nav.appendChild(el('p', `${order.length} pages`));
+  order.forEach((id, n) => {
+    const entry = draft.entries[id];
+    const b = el('button', `${String(n + 1).padStart(2, '0')}  ${id}  ${entry.decision === 'PENDING_OWNER' ? '' : '*'}`);
+    if (entry.decision !== 'PENDING_OWNER') b.classList.add('done');
+    if (id === current) b.classList.add('current');
+    b.onclick = () => openPage(id);
+    nav.appendChild(b);
+  });
+}
+
+function lines(rows, lo, hi) {
+  const pre = el('pre');
+  rows.forEach(([n, text]) => { const s = el('span', `${String(n).padStart(6, ' ')} | ${text}\n`); if (n >= lo && n <= hi) s.className = 'cited'; pre.appendChild(s); });
+  return pre;
+}
+
+async function openPage(id) {
+  current = id;
+  const p = await getJSON('/api/page/' + id);
+  const box = document.getElementById('page'); box.replaceChildren();
+  box.appendChild(el('h2', `${order.indexOf(id) + 1}/${order.length}  ${id}`));
+  box.appendChild(el('p', p.notice, 'notice'));
+  box.appendChild(el('h3', `${p.pr.repository} #${p.pr.number}`));
+  box.appendChild(el('p', p.pr.url));
+  box.appendChild(el('h4', 'PR title (untrusted input, data only)'));
+  box.appendChild(el('div', p.pr.title, 'untrusted'));
+  box.appendChild(el('h4', 'PR description (untrusted input, data only)'));
+  box.appendChild(el('div', p.pr.description || '(empty)', 'untrusted'));
+  box.appendChild(el('h3', 'Claim as stated by the review'));
+  const dl = el('dl');
+  [['Title', p.claim.title], ['Category', p.claim.category], ['Severity', p.claim.severity], ['Impact', p.claim.impact],
+   ['Quote', JSON.stringify(p.claim.quote)],
+   ['Location', `${p.location.path}  HEAD lines ${p.location.start}-${p.location.end}  (revision ${p.location.head_revision})`]]
+    .forEach(([k, v]) => { dl.appendChild(el('dt', k)); dl.appendChild(el('dd', v)); });
+  box.appendChild(dl);
+  const c = p.source_context;
+  box.appendChild(el('h4', `Frozen HEAD source ${c.path} lines ${c.first_line}-${c.last_line} of ${c.file_lines} (cited lines marked)`));
+  box.appendChild(lines(c.lines, c.cited_lines[0], c.cited_lines[1]));
+  const d1 = el('details'); d1.appendChild(el('summary', 'Frozen patch of this file'));
+  d1.appendChild(el('pre', p.file_patch || '(none)')); box.appendChild(d1);
+  const d2 = el('details'); d2.appendChild(el('summary', 'All frozen files of this PR'));
+  d2.ontoggle = async () => {
+    if (!d2.open || d2.dataset.loaded) return;
+    d2.dataset.loaded = '1';
+    const s = sources[p.sources] || (sources[p.sources] = await getJSON('/api/' + p.sources));
+    d2.appendChild(el('p', `${s.files.length} files frozen of ${s.reported_changed_files} changed; complete listing: ${s.complete_listing}`));
+    s.files.forEach(f => {
+      const d = el('details'); d.appendChild(el('summary', `${f.path} (${f.status})`));
+      d.appendChild(el('h5', 'patch')); d.appendChild(el('pre', f.patch || '(none)'));
+      if (f.head !== null) { d.appendChild(el('h5', 'HEAD')); d.appendChild(lines(f.head.split('\n').map((t, i) => [i + 1, t]), 0, -1)); }
+      if (f.base !== null) { d.appendChild(el('h5', 'BASE')); d.appendChild(lines(f.base.split('\n').map((t, i) => [i + 1, t]), 0, -1)); }
+      d2.appendChild(d);
+    });
+  };
+  box.appendChild(d2);
+  fillForm(draft.entries[id]);
+  renderList();
+}
+
+function fillForm(entry) {
+  document.getElementById('form').hidden = false;
+  document.querySelectorAll('input[name=decision]').forEach(r => { r.checked = r.value === entry.decision; });
+  const outside = document.getElementById('outside');
+  outside.value = entry.needs_outside_context === null ? '' : entry.needs_outside_context ? 'yes' : 'no';
+  outside.disabled = entry.decision !== 'INSUFFICIENT';
+  document.getElementById('evidence').value = entry.evidence.map(e => e.start === e.end ? `${e.path}:${e.start}` : `${e.path}:${e.start}-${e.end}`).join('\n');
+  document.getElementById('reason').value = entry.reason;
+  document.getElementById('status').textContent = '';
+}
+
+document.querySelectorAll('input[name=decision]').forEach(r => r.onchange = () => {
+  const outside = document.getElementById('outside');
+  outside.disabled = r.value !== 'INSUFFICIENT' || !r.checked;
+  if (outside.disabled) outside.value = '';
+});
+
+function parseEvidence(text) {
+  return text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
+    const m = s.match(/^(.+):(\d+)(?:-(\d+))?$/); if (!m) throw new Error('evidence format: ' + s);
+    const start = Number(m[2]); return {path: m[1].trim(), start, end: m[3] ? Number(m[3]) : start};
+  });
+}
+
+document.getElementById('save').onclick = async () => {
+  const status = document.getElementById('status');
+  const chosen = document.querySelector('input[name=decision]:checked');
+  if (!chosen) { status.textContent = 'Choose a decision first; nothing was saved.'; return; }
+  let evidence;
+  try { evidence = parseEvidence(document.getElementById('evidence').value); } catch (e) { status.textContent = e.message; return; }
+  const o = document.getElementById('outside').value;
+  const body = {decision: chosen.value, needs_outside_context: chosen.value === 'INSUFFICIENT' && o ? o === 'yes' : null,
+                evidence, reason: document.getElementById('reason').value};
+  const r = await fetch('/api/draft/' + current, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Owner-Draft': '1'}, body: JSON.stringify(body)});
+  const saved = await r.json();
+  if (!r.ok) { status.textContent = 'Not saved: ' + saved.error; return; }
+  draft.entries[current] = saved; status.textContent = 'Saved to the draft file.'; renderList();
+};
+
+(async () => {
+  const m = await getJSON('/api/manifest'); order = m.order;
+  draft = await getJSON('/api/draft');
+  renderList();
+  const next = order.find(id => draft.entries[id].decision === 'PENDING_OWNER') || order[0];
+  openPage(next);
+})();
+</script>
+</body>
+</html>

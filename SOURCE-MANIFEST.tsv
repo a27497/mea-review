@@ -17,6 +17,10 @@ benchmarks/reviewbench/samples/licenses/leap-MIT.txt	resplab/leap/LICENSE	e7e206
 benchmarks/reviewbench/samples/licenses/torchfont-MIT.txt	torchfont/torchfont/LICENSE	5a2c993caa9c1183f58b1cc50aea6a2609d96959 + 7604bc745c38d151e23b8f7528a65f74c2613545	Identical full MIT notice at BASE and HEAD
 benchmarks/reviewbench/samples/manifest.json	artifacts/reviewbench-cohort-v2-jLXQef/replay-final/cohort.json	Frozen cohort v2	Pins both shipped sample and MIT reader hashes
 benchmarks/reviewbench/scoring.py	benchmarks/reviewbench/scoring.py	e41bf60796c4ddae54566388636dd943ac623465	Byte-exact score arithmetic
+benchmarks/reviewbench/v3/README.md	benchmarks/reviewbench/v3/README.md	8556f980d0873ed55e2583df9a9dd6a57670371a	Portable instructions for offline adjudication and current evidence status
+benchmarks/reviewbench/v3/holdout_adjudicate.py	benchmarks/reviewbench/v3/holdout_adjudicate.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Loopback reader, serialized draft updates, terminal entry and interactive freeze
+benchmarks/reviewbench/v3/holdout_reader.html	benchmarks/reviewbench/v3/holdout_reader.html	8556f980d0873ed55e2583df9a9dd6a57670371a	Self-contained offline adjudication interface
+benchmarks/reviewbench/v3/holdout_reveal.py	benchmarks/reviewbench/v3/holdout_reveal.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Reveal and reconcile decisions after the freeze
 benchmarks/reviewbench/vendor/ReviewBench/LICENSE	review-bench/ReviewBench/LICENSE	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/vendor/ReviewBench/scripts/eval/input-validation.ts	review-bench/ReviewBench/scripts/eval/input-validation.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/vendor/ReviewBench/scripts/lib/types.ts	review-bench/ReviewBench/scripts/lib/types.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
@@ -72,6 +76,7 @@ scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider 
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
 tests/test_controlled_investigation.py	tests/test_real_investigation.py	New	Existing simulation tests plus request-profile regressions
+tests/test_holdout_adjudication.py	tests/test_holdout_adjudication.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic adjudication, freeze and reveal test adapted to the private packet boundary
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler
 tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained investigation regressions with local fixtures

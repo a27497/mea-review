@@ -54,7 +54,7 @@ class FakeGitHub:
             self.patches = dict(patches)
             for c in self.comments:
                 if c['id'] in outdated_ids:
-                    c.update(line=None, position=None)
+                    c.update(line=None)  # GitHub keeps a stale position for outdated comments
                 elif moved and c['id'] in moved:
                     c.update(line=moved[c['id']], commit_id=head)
 

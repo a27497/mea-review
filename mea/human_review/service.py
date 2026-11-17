@@ -5,6 +5,7 @@ attended command-line lane (mea.github_writeback); the workbench never has one.
 """
 import copy
 import json
+import re
 from ..contract import digest,canonical,fields,text
 from ..investigation.tools import View
 from ..investigation.validation import validate_candidates
@@ -130,9 +131,20 @@ class Service:
         if admitted:
             remote=self.remote.read(value['target']);self.admit_remote(value,remote)
             value['remote_identity']=self.remote_identity(remote)
+            value['other_comments_at_anchor']=self.others(value,remote)
         else:value['remote_identity']=None
         value['confirmation_digest']=digest(value)
         return value
+
+    @staticmethod
+    def others(value,remote):
+        """Comments by other accounts (including bots) on the same anchor, shown to the confirmer."""
+        p=value['payload'];rows=[]
+        for c in remote['comments']:
+            if c.get('user',{}).get('login')!=remote['principal'] and all(c.get(k)==p[k] for k in ['commit_id','path','line','side']):
+                plain=' '.join(re.sub(r'<!--.*?-->|<[^>]+>','',c.get('body') or '',flags=re.S).split())
+                rows.append(dict(id=c['id'],login=c['user']['login'],html_url=c.get('html_url'),excerpt=plain[:300],label='Already raised by '+c['user']['login']))
+        return rows
 
     @staticmethod
     def slot(value):
@@ -143,24 +155,42 @@ class Service:
         if remote['identity']!=value['target'] or remote['head']!=value['payload']['commit_id']:raise ValueError('PR_HEAD_DRIFT')
         if not remote['can_comment'] or remote['state']!='open':raise ValueError('REMOTE_PERMISSION_OR_STATE')
         if not remote['complete_listing']:raise ValueError('REMOTE_DUPLICATES_UNKNOWN')
-        if any(all(c.get(k)==value['payload'][k] for k in ['commit_id','path','line','side']) for c in remote['comments']):raise ValueError('DUPLICATE_REMOTE_ANCHOR')
+        # Idempotency: our own principal never comments twice on one anchor. Other reviewers' comments do not block.
+        if any(c.get('user',{}).get('login')==remote['principal'] and all(c.get(k)==value['payload'][k] for k in ['commit_id','path','line','side']) for c in remote['comments']):raise ValueError('DUPLICATE_REMOTE_ANCHOR')
         p=value['payload']
         if 'commentable' in remote and p['line'] not in remote['commentable'].get(p['path'],{}).get(p['side'],[]):raise ValueError('REMOTE_DIFF_ANCHOR_INVALID')
+
+    def decline(self,identifier,reference):
+        """Record a human decision not to send this draft. No remote request."""
+        text(reference,500)
+        if not reference.strip():raise ValueError('HUMAN_APPROVAL_REFERENCE_REQUIRED')
+        with self.store.transaction() as db:
+            d=get(db,identifier,'draft')
+            if d.get('intent_id'):raise ValueError('DRAFT_HAS_SEND_INTENT')
+            if d['status']!='DECLINED_BY_HUMAN':
+                d.update(status='DECLINED_BY_HUMAN',confirmation=None,approval=None,declined=dict(reference=reference))
+                event(d,'declined','Human decided not to send this comment. Nothing was written remotely.',reference=reference);put(db,d)
+        return d
 
     def confirm(self,identifier,preview,human_confirmed,approval=None):
         if human_confirmed is not True:raise ValueError('EXPLICIT_HUMAN_CONFIRMATION_REQUIRED')
         if self.live:
             # The live lane needs the recorded human decision for this exact binding.
-            fields(approval,'reference binding_sha256');text(approval['reference'],500)
+            fields(approval,'reference binding_sha256 acknowledged_other_comment_ids');text(approval['reference'],500)
             if not approval['reference'].strip():raise ValueError('HUMAN_APPROVAL_REFERENCE_REQUIRED')
+            ack=approval['acknowledged_other_comment_ids']
+            if not isinstance(ack,list) or any(type(x) is not int for x in ack):raise ValueError('ACKNOWLEDGED_OTHER_COMMENTS_INVALID')
         elif approval is not None:raise ValueError('APPROVAL_ONLY_FOR_LIVE')
         fresh=self.preview(identifier)
         if preview!=fresh:raise ValueError('CONFIRMATION_SNAPSHOT_CHANGED')
         if fresh['mode']!=self.remote.mode:raise ValueError('LIVE_PUBLISH_DISABLED_NO_TARGET')
         if self.live and approval['binding_sha256']!=binding(fresh):raise ValueError('HUMAN_APPROVAL_BINDING_MISMATCH')
+        # Another account's comment on the same anchor must be seen and accepted, never silently ignored.
+        if self.live and sorted(approval['acknowledged_other_comment_ids'])!=sorted(c['id'] for c in fresh['other_comments_at_anchor']):raise ValueError('OTHER_COMMENTS_AT_ANCHOR_NOT_ACKNOWLEDGED')
         with self.store.transaction() as db:
             d=get(db,identifier,'draft')
             if d.get('intent_id'):raise ValueError('DRAFT_HAS_SEND_INTENT')
+            if d['status']=='DECLINED_BY_HUMAN':raise ValueError('DRAFT_DECLINED_BY_HUMAN')
             # Re-read source/body/revision under the same local write transaction.
             if self.payload(d)!= {k:fresh[k] for k in self.payload(d)}:raise ValueError('CONFIRMATION_SNAPSHOT_CHANGED')
             if self.live:
@@ -196,13 +226,21 @@ class Service:
         self.increment(review_id,new_task_id)
         with self.store.launch_lock(),self.store.transaction() as db:
             r=get(db,review_id,'review')
-            if any(x['new_task_id']==new_task_id for x in r.get('rereviews',[])):return self.open(review_id)
-            old_id=r['versions'][-2]['task_id'];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
-            sends=rows(db,'send',review_id)
-            result=rereview.check(old,new,sends,observed)
-            r.setdefault('rereviews',[]).append(dict(old_task_id=old_id,new_task_id=new_task_id,**result))
-            event(r,'incremental_rereview','Sent comment anchors checked against the increment; outdated comments are not re-posted at a new location.',new_task_id=new_task_id)
-            put(db,r)
+            done=next((x for x in r.get('rereviews',[]) if x['new_task_id']==new_task_id),None)
+            if done:
+                # Repeat: keep the local anchor result; only refresh the read-only remote observation.
+                if observed is not None:
+                    remote={c['id']:c for c in observed.get('comments',[])}
+                    for row in done['comments']:row['github']=dict(remote[row['comment_id']]['current']) if row['comment_id'] in remote else 'NOT_LISTED'
+                    done['observed_remote']=True
+                    event(r,'remote_reobserved','Read-only remote comment state refreshed for an existing re-review.',new_task_id=new_task_id);put(db,r)
+            else:
+                old_id=r['versions'][-2]['task_id'];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
+                sends=rows(db,'send',review_id)
+                result=rereview.check(old,new,sends,observed)
+                r.setdefault('rereviews',[]).append(dict(old_task_id=old_id,new_task_id=new_task_id,**result))
+                event(r,'incremental_rereview','Sent comment anchors checked against the increment; outdated comments are not re-posted at a new location.',new_task_id=new_task_id)
+                put(db,r)
         return self.open(review_id)
 
     def compare_linked(self,review_id,old_task_id,new_task_id):

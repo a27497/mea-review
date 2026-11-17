@@ -583,6 +583,7 @@ function renderEditor(n,t,c,d) {
       exact.append(el('h3','Exact comment preview'),fields([['Target',repo(p.target)],['Commit',p.payload.commit_id],
         ['Diff anchor',p.payload.path + ':' + p.payload.line + ' ' + p.payload.side],['Mode',p.mode]]),
         el('pre',p.payload.body,'exact-body'));
+      otherComments(exact,p.other_comments_at_anchor);
       if (p.mode === 'MOCK_GITHUB_NOT_LIVE' && p.confirmation_digest !== d.confirmation?.confirmation_digest) {
         const ack = el('input'); ack.type = 'checkbox'; ack.id = 'acknowledge'; ack.checked = state.acknowledged;
         const lab = el('label'); lab.htmlFor = ack.id;
@@ -616,6 +617,7 @@ function renderEditor(n,t,c,d) {
     confirmed.append(fields([['Pull request',repo(d.confirmation.target)],['Head commit',c.commit_id],['Line',c.path + ':' + c.line + ' ' + c.side],
       ['Approval',d.approval.reference],['Binding',d.approval.binding_sha256]]),el('pre',c.body,'exact-body'),
       el('p','Confirmed in the attended command-line lane. This workbench cannot send to GitHub.','rail-sub'));
+    otherComments(confirmed,d.confirmation.other_comments_at_anchor,d.approval.acknowledged_other_comment_ids);
   }
   const sends = state.human.sends.filter(s => s.draft_id === d.id);
   if (sends.length) {
@@ -704,6 +706,19 @@ function renderHuman(n,t) {
       }))] : []),
     detail('Review events',pre(state.human.events)),exportsFor(null,state.human)
   ]));
+}
+function otherComments(parent, rows, acknowledged) {
+  if (!rows?.length) return;
+  const box = el('div','','callout warn'); box.id = 'other-comments';
+  box.append(el('h3','Same line already has comments from other accounts'));
+  for (const row of rows) {
+    const p = el('p','','');
+    p.append(tag(row.label,'warn'),'  ' + row.excerpt.slice(0,160) + (row.excerpt.length > 160 ? '…' : ''));
+    box.append(p);
+    if (row.html_url?.startsWith('https://github.com/')) box.append(link('Comment ' + row.id + ' by ' + row.login,row.html_url,'mono'));
+  }
+  box.append(el('p',acknowledged ? 'Seen by the confirmer before sending: ' + acknowledged.join(', ') : 'The confirmer decides whether to send anyway.','rail-sub'));
+  parent.append(box);
 }
 function renderRereview(n,t) {
   const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id);

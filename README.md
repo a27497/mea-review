@@ -127,6 +127,59 @@ model request, the static report and Review v3 repeat an incomplete capture
 status. Snapshots without `scope.capture` remain valid. Real PR snapshots
 belong in private storage, not in this repository.
 
+To review only what changed since an earlier head of the same PR, add
+`--since EARLIER_HEAD_SHA`. The base side is then that commit instead of the
+merge base. The capture fails with `SINCE_NOT_ANCESTOR_OF_HEAD` after a force
+push or rebase, because no increment exists.
+
+## Send confirmed line comments (attended, allowlisted)
+
+~~~sh
+W="python3 -B -m mea.github_writeback --store PRIVATE_STORE --allow-repository owner/repo"
+$W import-task --from-store RUN_STORE --task-id TASK
+$W open --task-id TASK
+$W draft --review REVIEW --task-id TASK --candidate CANDIDATE
+$W --out PRIVATE_DIR/preview.json preview --draft DRAFT
+$W confirm --draft DRAFT --preview PRIVATE_DIR/preview.json \
+  --approval-ref "who approved, where" --binding BINDING_SHA256 --human-approved
+$W send --draft DRAFT --confirm-live-write
+~~~
+
+This lane writes real pull request review comments, only to repositories named
+with `--allow-repository`. The token comes from GH_TOKEN, GITHUB_TOKEN or
+`gh auth token` at run time and only appears in the Authorization header.
+Receipts keep the HTTP status, GitHub request id and a response digest.
+
+`preview` reads the repository, the login, the pull, its changed-file patches
+and the review-comment listing with GET requests. It prints the exact payload
+(commit, path, line, side, body) and a binding digest of the repository, PR,
+head and payload. `confirm` needs the recorded human approval of that binding.
+It refuses a different binding, a changed preview or a moved head. Comments by
+other accounts, bots included, on the same line are listed as "Already raised
+by ACCOUNT". The confirmer must acknowledge each one by id with
+`--acknowledge-other-comment`. `decline` records a human decision not to send.
+
+`send` re-reads the remote state and makes one POST with no retry. A draft has
+at most one send intent, and an anchor already commented on by the same login
+is refused. The result is PUBLISHED; NOT_SENT when no POST was issued or GitHub
+answered 400/401/403/404/422; or UNCERTAIN after a timeout, connection error,
+5xx, 429 or an unusable 201 receipt. `reconcile --intent ID` looks for exactly
+one matching comment in a complete listing and makes no POST. Only after a
+complete listing shows no match can `release-after-reconcile --human-approved`
+free the slot, and the draft then needs a new preview and confirmation.
+
+After a new commit, capture the increment with `--since`, run the investigation
+on it, import the task and run `rereview --review REVIEW --task-id NEW_TASK`.
+It maps each sent comment's line through the increment patch. A modified or
+deleted anchor line is OUTDATED, and an unchanged one is CURRENT at its mapped
+line. GitHub's own `line` for the comment is recorded next to it. Outdated
+comments stay on their original commit and are not re-posted. A new candidate
+inside the lines that replaced an outdated comment, or on a sent comment's
+mapped line, cannot be drafted.
+
+The workbench shows confirmation, writeback and re-review state for these
+reviews. It has no live remote and cannot confirm or send a live draft.
+
 ## Run the controlled real DeepSeek lane
 
 ~~~sh
@@ -227,7 +280,8 @@ All examples are self-owned synthetic fixtures. See the
 
 Static findings, Mock candidates and real-model candidates require human
 judgment. Source hashes bind evidence to the supplied snapshot. Read-only
-GitHub capture and the command-line real DeepSeek lane are included. Source
-authenticity, target execution, real AI in the workbench and GitHub writeback
-are outside this candidate.
+GitHub capture, the command-line real DeepSeek lane and attended GitHub
+line-comment writeback for allowlisted repositories are included. Source
+authenticity, target execution, real AI in the workbench and writeback from the
+workbench are outside this candidate.
 The project is licensed under the [MIT License](LICENSE). Publication approval is pending.

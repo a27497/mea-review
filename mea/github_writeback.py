@@ -115,7 +115,8 @@ def normalize(c):
                 commit_id=c.get('original_commit_id'), path=c['path'], line=c.get('original_line'), side=c.get('side'),
                 body=c['body'], in_reply_to_id=c.get('in_reply_to_id'),
                 current=dict(commit_id=c.get('commit_id'), line=c.get('line'), position=c.get('position'),
-                             outdated=c.get('line') is None and c.get('position') is None))
+                             # GitHub keeps a stale position but nulls `line` once the anchor no longer applies.
+                             outdated=c.get('line') is None and c.get('original_line') is not None))
 
 
 class LiveGitHub:
@@ -216,7 +217,8 @@ class LiveGitHub:
             raise NotSent('REMOTE_CHANGED_AFTER_ADMISSION')
         if not remote['complete_listing']:
             raise NotSent('REMOTE_DUPLICATES_UNKNOWN')
-        if any(c['commit_id'] == payload['commit_id'] and c['path'] == payload['path'] and c['line'] == payload['line'] and c['side'] == payload['side'] for c in remote['comments']):
+        if any(c['user']['login'] == remote['principal'] and c['commit_id'] == payload['commit_id'] and c['path'] == payload['path']
+               and c['line'] == payload['line'] and c['side'] == payload['side'] for c in remote['comments']):
             raise NotSent('DUPLICATE_REMOTE_ANCHOR')
         if payload['line'] not in remote['commentable'].get(payload['path'], {}).get(payload['side'], []):
             raise NotSent('REMOTE_DIFF_ANCHOR_INVALID')
@@ -294,6 +296,8 @@ def main(argv=None):
     p = sub.add_parser('preview'); p.add_argument('--draft', required=True)
     p = sub.add_parser('confirm'); p.add_argument('--draft', required=True); p.add_argument('--preview', type=Path, required=True)
     p.add_argument('--approval-ref', required=True); p.add_argument('--binding', required=True); p.add_argument('--human-approved', action='store_true')
+    p.add_argument('--acknowledge-other-comment', type=int, action='append', default=[], help='id of another account\'s comment on the same anchor that the confirmer saw')
+    p = sub.add_parser('decline'); p.add_argument('--draft', required=True); p.add_argument('--approval-ref', required=True)
     p = sub.add_parser('send'); p.add_argument('--draft', required=True); p.add_argument('--confirm-live-write', action='store_true')
     p = sub.add_parser('reconcile'); p.add_argument('--intent', required=True)
     p = sub.add_parser('release-after-reconcile'); p.add_argument('--intent', required=True); p.add_argument('--human-approved', action='store_true')
@@ -336,9 +340,17 @@ def main(argv=None):
             value = service.preview(args.draft)
             result = dict(preview=value, binding_sha256=binding_of(value))
         elif args.command == 'confirm':
-            preview = decode(args.preview.read_bytes())['preview']
-            d = service.confirm(args.draft, preview, True, dict(reference=args.approval_ref, binding_sha256=args.binding))
+            saved = decode(args.preview.read_bytes())
+            saved = saved.get('result', saved) if isinstance(saved, dict) else None  # file written by `preview --out`
+            if not isinstance(saved, dict) or not isinstance(saved.get('preview'), dict):
+                raise ValueError('PREVIEW_FILE_INVALID')
+            preview = saved['preview']
+            d = service.confirm(args.draft, preview, True, dict(reference=args.approval_ref, binding_sha256=args.binding,
+                                                                 acknowledged_other_comment_ids=args.acknowledge_other_comment))
             result = dict(draft_id=d['id'], status=d['status'], approval=d['approval'], confirmation_digest=d['confirmation']['confirmation_digest'])
+        elif args.command == 'decline':
+            d = service.decline(args.draft, args.approval_ref)
+            result = dict(draft_id=d['id'], status=d['status'], declined=d['declined'])
         elif args.command == 'send':
             with store.connection() as db:
                 from .human_review.store import get

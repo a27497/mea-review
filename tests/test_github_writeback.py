@@ -77,7 +77,8 @@ class WritebackTests(unittest.TestCase):
     def approve(self, s=None, draft=None, reference='coordinator msg test'):
         s = s or self.s
         p = s.preview((draft or self.d)['id'])
-        s.confirm((draft or self.d)['id'], p, True, dict(reference=reference, binding_sha256=binding(p)))
+        s.confirm((draft or self.d)['id'], p, True, dict(reference=reference, binding_sha256=binding(p),
+                                                          acknowledged_other_comment_ids=[c['id'] for c in p['other_comments_at_anchor']]))
         return p
 
     def posts(self):
@@ -97,14 +98,14 @@ class WritebackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.s.confirm(self.d['id'], p, True)
         with self.assertRaisesRegex(ValueError, 'HUMAN_APPROVAL_BINDING_MISMATCH'):
-            self.s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256='0' * 64))
+            self.s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256='0' * 64, acknowledged_other_comment_ids=[]))
         with self.assertRaisesRegex(ValueError, 'HUMAN_APPROVAL_REFERENCE_REQUIRED'):
-            self.s.confirm(self.d['id'], p, True, dict(reference=' ', binding_sha256=binding(p)))
+            self.s.confirm(self.d['id'], p, True, dict(reference=' ', binding_sha256=binding(p), acknowledged_other_comment_ids=[]))
         for change in [dict(body='other text'), dict(line=1), dict(commit_id='f' * 40), dict(path='app.py'), dict(side='LEFT')]:
             stale = copy.deepcopy(p)
             stale['payload'].update(change)
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'CONFIRMATION_SNAPSHOT_CHANGED'):
-                self.s.confirm(self.d['id'], stale, True, dict(reference='msg', binding_sha256=binding(stale)))
+                self.s.confirm(self.d['id'], stale, True, dict(reference='msg', binding_sha256=binding(stale), acknowledged_other_comment_ids=[]))
         self.assertEqual(self.posts(), 0)
 
     def test_send_refused_when_any_bound_item_differs_from_confirmation(self):
@@ -234,12 +235,44 @@ class WritebackTests(unittest.TestCase):
         self.assertIn('REMOTE_CHANGED_AFTER_ADMISSION', r['events'][-1]['summary'])
         self.assertEqual(self.posts(), 0)
 
+    def test_other_reviewer_at_same_anchor_does_not_block_but_own_comment_does(self):
+        bot = dict(id=77, html_url=f'https://github.com/{REPO}/pull/{NUMBER}#discussion_r77', user=dict(login='review-bot[bot]'), body='bot',
+                   path='quota.py', side='RIGHT', commit_id=H1, original_commit_id=H1, line=2, original_line=2, position=1, in_reply_to_id=None)
+        self.fake.comments.append(bot)
+        p = self.s.preview(self.d['id'])
+        self.assertEqual(p['other_comments_at_anchor'], [dict(id=77, login='review-bot[bot]', html_url=bot['html_url'], excerpt='bot', label='Already raised by review-bot[bot]')])
+        with self.assertRaisesRegex(ValueError, 'OTHER_COMMENTS_AT_ANCHOR_NOT_ACKNOWLEDGED'):
+            self.s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256=binding(p), acknowledged_other_comment_ids=[]))
+        p = self.approve()
+        with self.store.connection() as db:
+            self.assertEqual(get(db, self.d['id'])['approval']['acknowledged_other_comment_ids'], [77])
+        self.assertEqual(Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')['status'], 'PUBLISHED')
+        self.assertEqual(self.posts(), 1)
+
+    def test_new_other_comment_after_confirmation_requires_reconfirmation(self):
+        p = self.approve()
+        self.fake.comments.append(dict(id=78, html_url='u', user=dict(login='review-bot[bot]'), body='late', path='quota.py', side='RIGHT',
+                                       commit_id=H1, original_commit_id=H1, line=2, original_line=2, position=1, in_reply_to_id=None))
+        with self.assertRaisesRegex(ValueError, 'CONFIRMATION_INVALIDATED_BY_CHANGE'):
+            Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(self.posts(), 0)
+
+    def test_declined_draft_cannot_be_confirmed_or_sent(self):
+        p = self.s.preview(self.d['id'])
+        d = self.s.decline(self.d['id'], 'coordinator msg declined')
+        self.assertEqual((d['status'], d['declined']['reference']), ('DECLINED_BY_HUMAN', 'coordinator msg declined'))
+        with self.assertRaisesRegex(ValueError, 'DRAFT_DECLINED_BY_HUMAN'):
+            self.s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256=binding(p), acknowledged_other_comment_ids=[]))
+        with self.assertRaisesRegex(ValueError, 'HUMAN_CONFIRMATION_REQUIRED'):
+            Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(self.posts(), 0)
+
     def test_target_outside_allowlist_cannot_be_confirmed_or_sent(self):
         s = self.service(allow=('someone/else',))
         p = s.preview(self.d['id'])
         self.assertEqual(p['mode'], 'LOCAL_PREVIEW_ONLY')
         with self.assertRaisesRegex(ValueError, 'LIVE_PUBLISH_DISABLED_NO_TARGET'):
-            s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256=binding(p)))
+            s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256=binding(p), acknowledged_other_comment_ids=[]))
         with self.assertRaisesRegex(ValueError, 'LIVE_TARGET_NOT_ALLOWLISTED'):
             s.remote.read(dict(repository=REPO, number=NUMBER))
         self.assertEqual(self.fake.requests, [])
@@ -278,6 +311,8 @@ class WritebackTests(unittest.TestCase):
         self.assertEqual(self.posts(), posts)
         again = self.s.rereview(self.r['id'], t2['id'], observed)
         self.assertEqual(len(again['rereviews']), 1)
+        self.assertEqual(again['rereviews'][0]['comments'][0]['status'], 'OUTDATED')
+        self.assertEqual(again['events'][-1]['kind'], 'remote_reobserved')
         # The sent comment remains on its original commit and is not resent.
         self.assertEqual(again['sends'][0]['payload']['commit_id'], H1)
 
@@ -324,6 +359,20 @@ class WritebackTests(unittest.TestCase):
             self.assertIn('BLOCKED', out.getvalue())
             tok.assert_not_called()
         self.assertEqual(self.posts(), 0)
+
+
+    def test_cli_confirm_reads_the_preview_file_written_by_preview(self):
+        out = self.root / 'preview.json'
+        base = ['--store', str(self.root / 'review'), '--allow-repository', REPO]
+        with patch('mea.github_writeback.token', return_value=TOKEN), \
+                patch('mea.github_writeback.Transport', lambda secret: Transport(secret, connect=self.fake.connect())), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli(base + ['--out', str(out), 'preview', '--draft', self.d['id']]), 0)
+            saved = json.loads(out.read_bytes())['result']
+            self.assertEqual(cli(base + ['confirm', '--draft', self.d['id'], '--preview', str(out), '--approval-ref', 'msg',
+                                         '--binding', saved['binding_sha256'], '--human-approved']), 0)
+            self.assertEqual(cli(base + ['send', '--draft', self.d['id'], '--confirm-live-write']), 0)
+        self.assertEqual(self.posts(), 1)
+        self.assertNotIn(TOKEN.encode(), out.read_bytes())
 
 
 class AnchorMappingTests(unittest.TestCase):

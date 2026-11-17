@@ -1,0 +1,201 @@
+"""GitHub PR read-only capture from an offline fixture. No network."""
+import json
+from unittest.mock import patch
+import unittest
+
+from mea.contract import digest, validate
+from mea.github_input import (MISSING, TRANSPORT, TRUNCATED, Response, RestFetcher, TransportError,
+                              capture, parse_ref)
+from mea.investigation.provider_view import CrossFileView
+import github_fixtures as fx
+
+REF = f'{fx.OWNER}/{fx.REPO}#{fx.NUMBER}'
+BASE = f'/repos/{fx.OWNER}/{fx.REPO}'
+
+
+def kinds(report):
+    return sorted({(g['kind'], g['code'], g['path']) for g in report['gaps']})
+
+
+class GithubInputTests(unittest.TestCase):
+    def setUp(self):
+        guard = patch('socket.socket.connect', side_effect=AssertionError('NO_NETWORK'))
+        guard.start()
+        self.addCleanup(guard.stop)
+
+    def test_complete_capture_pins_head_and_merge_base_with_both_sides(self):
+        fetcher = fx.Fetcher()
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertEqual(report['gaps'], [])
+        validate(snapshot)
+        self.assertEqual(snapshot['revisions'], dict(base=fx.MERGE_BASE, head=fx.HEAD, target_base=fx.TARGET_BASE))
+        self.assertEqual(snapshot['pr']['url'], f'https://github.com/{fx.OWNER}/{fx.REPO}/pull/{fx.NUMBER}')
+        changed = snapshot['files'][0]
+        self.assertEqual((changed['path'], changed['status']), ('shop/pricing.py', 'modified'))
+        self.assertEqual(changed['sides']['base']['text'], fx.BASE_FILES['shop/pricing.py'])
+        self.assertEqual(changed['sides']['head']['text'], fx.HEAD_FILES['shop/pricing.py'])
+        context = {f['path']: f for f in snapshot['files'][1:]}
+        self.assertIn('tests/test_pricing.py', context)
+        self.assertIn('shop/cart.py', context)
+        self.assertTrue(all(f['status'] == 'context' and f['patch'] is None for f in context.values()))
+        reasons = {r['path']: r['reason'] for r in report['context_selection']['files']}
+        self.assertTrue(reasons['tests/test_pricing.py'].startswith('TEST_NAME_MATCH'))
+        self.assertTrue(reasons['shop/cart.py'].startswith('CODE_SEARCH_DEFAULT_BRANCH'))
+        self.assertEqual(snapshot['scope'], dict(reported_changed_files=len(snapshot['files']), complete_listing=True, omitted_sources=[]))
+        self.assertEqual(snapshot['provenance']['kind'], 'KNOWN_HISTORICAL_DEVELOPMENT')
+        self.assertEqual(snapshot['provenance']['capture_sha256'], digest(report['requests']))
+        self.assertEqual(report['input_sha256'], digest(snapshot))
+        self.assertTrue(all(r['method'] == 'GET' for r in report['requests']))
+        # Only collected snapshot paths at the pinned refs were read.
+        self.assertTrue(all(f'ref={fx.HEAD}' in p or f'ref={fx.MERGE_BASE}' in p for p, _ in fetcher.calls if '/contents/' in p))
+        view = CrossFileView.from_input(snapshot)
+        self.assertIn(('head', 'shop/pricing.py', 3), view.changes)
+
+    def test_pinned_historical_head_must_belong_to_the_pull(self):
+        pinned = REF + '@' + fx.HEAD
+        report, snapshot = capture(pinned, fx.Fetcher(), now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertTrue(report['pinned_head'])
+        report, snapshot = capture(REF + '@' + '9' * 40, fx.Fetcher(), now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['status'], report['failure']['kind'], report['failure']['code']),
+                         ('FAILED', MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
+
+    def test_missing_evidence_is_reported_as_missing(self):
+        head = dict(fx.HEAD_FILES, **{'assets/logo.py': 'x = 1\n'})
+        fetcher = fx.Fetcher(head=head, overrides={
+            f'{BASE}/contents/assets/logo.py?ref={fx.HEAD}': fx.contents(b'\x89PNG\x00\x01'),
+        })
+        files = fetcher.files()
+        for row in files:
+            if row['filename'] == 'assets/logo.py':
+                row['sha'] = fx.git_blob_sha(b'\x89PNG\x00\x01')
+                del row['patch']
+        fetcher.compare_files = files
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertEqual(report['status'], 'INCOMPLETE')
+        self.assertEqual(kinds(report), [(MISSING, 'BINARY_CONTENT', 'assets/logo.py')])
+        self.assertIn(dict(path='assets/logo.py', side='head', reason='MISSING:BINARY_CONTENT'), snapshot['scope']['omitted_sources'])
+        logo = next(f for f in snapshot['files'] if f['path'] == 'assets/logo.py')
+        self.assertEqual((logo['sides'], logo['patch']), ({}, None))
+        # A 404 at the pinned base is also missing evidence, not a transport failure.
+        fetcher = fx.Fetcher(overrides={f'{BASE}/contents/shop/pricing.py?ref={fx.MERGE_BASE}': Response(404, b'{}')})
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertIn((MISSING, 'CONTENT_HTTP_404', 'shop/pricing.py'), kinds(report))
+        self.assertEqual(report['gap_counts'][TRANSPORT], 0)
+
+    def test_truncated_evidence_is_reported_as_truncated(self):
+        big = 'x = 1\n' * 21000
+        head = dict(fx.HEAD_FILES, **{'shop/big.py': big})
+        fetcher = fx.Fetcher(head=head)
+        files = fetcher.files()
+        for row in files:
+            if row['filename'] == 'shop/pricing.py':
+                del row['patch']  # GitHub omits patches of large diffs.
+        fetcher.compare_files = files
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertEqual(report['status'], 'INCOMPLETE')
+        found = kinds(report)
+        self.assertIn((TRUNCATED, 'SOURCE_BYTE_BOUND', 'shop/big.py'), found)
+        self.assertIn((TRUNCATED, 'PROVIDER_PATCH_OMITTED', 'shop/pricing.py'), found)
+        self.assertEqual(report['gap_counts'][MISSING], 0)
+        self.assertEqual(report['gap_counts'][TRANSPORT], 0)
+        pricing = next(f for f in snapshot['files'] if f['path'] == 'shop/pricing.py')
+        self.assertIsNone(pricing['patch'])
+        self.assertEqual(set(pricing['sides']), {'base', 'head'})
+        # A capped provider file listing marks the listing incomplete and skips context.
+        many = [dict(filename=f'pkg/m{i}.py', status='added', changes=1, patch='@@ -0,0 +1 @@\n+x = 1') for i in range(300)]
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=many), now=0)
+        self.assertIn((TRUNCATED, 'PROVIDER_FILE_LIST_LIMIT', None), kinds(report))
+        self.assertIn((TRUNCATED, 'FILE_COUNT_BOUND', 'pkg/m24.py'), kinds(report))
+        self.assertFalse(snapshot['scope']['complete_listing'])
+        self.assertEqual(report['context_selection']['status'], 'SKIPPED_INCOMPLETE_CHANGE_LISTING')
+
+    def test_transport_failures_are_reported_as_transport(self):
+        fetcher = fx.Fetcher(overrides={f'{BASE}/contents/shop/pricing.py?ref={fx.HEAD}': TransportError('TimeoutError')})
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertEqual(report['status'], 'INCOMPLETE')
+        self.assertEqual(kinds(report), [(TRANSPORT, 'TimeoutError', 'shop/pricing.py')])
+        self.assertIn(dict(path='shop/pricing.py', side='head', reason='TRANSPORT:TimeoutError'), snapshot['scope']['omitted_sources'])
+        for status, code in [(503, 'HTTP_503'), (403, 'HTTP_403_FORBIDDEN_OR_RATE_LIMITED'), (429, 'HTTP_429_RATE_LIMITED')]:
+            report, snapshot = capture(REF, fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': Response(status, b'{}')}), now=0)
+            self.assertIsNone(snapshot)
+            self.assertEqual((report['status'], report['failure']['kind'], report['failure']['code']), ('FAILED', TRANSPORT, code))
+        report, snapshot = capture(REF, fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': TransportError('ConnectionResetError')}), now=0)
+        self.assertEqual(report['failure']['kind'], TRANSPORT)
+        report, snapshot = capture(REF, fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': Response(200, b'not json')}), now=0)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (TRANSPORT, 'MALFORMED_JSON_RESPONSE'))
+        # A missing PR is not a transport failure.
+        report, snapshot = capture(REF, fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': Response(404, b'{}')}), now=0)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (MISSING, 'PULL_HTTP_404'))
+
+    def test_patch_inconsistent_with_pinned_source_is_dropped(self):
+        fetcher = fx.Fetcher()
+        files = fetcher.files()
+        files[0]['patch'] = '@@ -1,1 +1,1 @@\n-def other():\n+def total(items, discount=None):'
+        fetcher.compare_files = files
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertIn((MISSING, 'PATCH_INCONSISTENT:PATCH_SOURCE_MISMATCH', 'shop/pricing.py'), kinds(report))
+        self.assertIsNone(snapshot['files'][0]['patch'])
+
+    def test_open_pull_head_moving_during_capture_fails(self):
+        fetcher = fx.Fetcher(state='open', merged=False)
+        pulls = iter([fetcher.pull(), dict(fetcher.pull(), head=dict(sha='5' * 40))])
+        original = fetcher.get
+
+        def get(path, accept):
+            if path == f'{BASE}/pulls/{fx.NUMBER}':
+                fetcher.calls.append((path, accept))
+                return Response(200, json.dumps(next(pulls)).encode())
+            return original(path, accept)
+        fetcher.get = get
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual(report['failure']['code'], 'HEAD_MOVED_DURING_CAPTURE')
+        report, snapshot = capture(REF, fx.Fetcher(state='open', merged=False), now=0)
+        self.assertEqual(snapshot['provenance']['kind'], 'FROZEN_PENDING_REVIEW')
+
+    def test_reference_grammar(self):
+        self.assertEqual(parse_ref('a/b#3'), ('a', 'b', 3, None))
+        for bad in ['a/b', 'a/b#0', 'a b/c#1', 'a/b#1@abc', '../x#1']:
+            with self.assertRaises(ValueError):
+                parse_ref(bad)
+
+    def test_rest_fetcher_sends_authenticated_get_and_bounds_response(self):
+        sent = []
+
+        class Conn:
+            def __init__(self, body=b'{}', error=None):
+                self.body, self.error = body, error
+            def request(self, method, path, headers):
+                sent.append((method, path, headers))
+                if self.error:
+                    raise self.error
+            def getresponse(self):
+                body = self.body
+                class R:
+                    status = 200
+                    def read(self, n):
+                        return body[:n]
+                    def getheaders(self):
+                        return [('Content-Type', 'application/json')]
+                return R()
+            def close(self):
+                pass
+        fetcher = RestFetcher('ghs-test-token', connect=lambda: Conn())
+        self.assertEqual(fetcher.get('/repos/a/b/pulls/1').status, 200)
+        method, path, headers = sent[0]
+        self.assertEqual((method, path, headers['Authorization']), ('GET', '/repos/a/b/pulls/1', 'Bearer ghs-test-token'))
+        with self.assertRaises(TransportError) as raised:
+            RestFetcher(connect=lambda: Conn(error=TimeoutError())).get('/x')
+        self.assertEqual(raised.exception.code, 'TimeoutError')
+        with patch('mea.github_input.RESPONSE_BYTES', 4), self.assertRaises(TransportError) as raised:
+            RestFetcher(connect=lambda: Conn(body=b'0123456789')).get('/x')
+        self.assertEqual(raised.exception.code, 'RESPONSE_BYTE_BOUND')
+        report, _ = capture(REF, fx.Fetcher(), now=0)
+        self.assertNotIn('token', json.dumps(report).lower())
+
+
+if __name__ == '__main__':
+    unittest.main()

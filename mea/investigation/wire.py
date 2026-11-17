@@ -1,7 +1,7 @@
 """Single-attempt DeepSeek wire contract with an injected connection.
 
-No worker or CLI in this candidate supplies a real connection or reads keys.
-The adapter bounds response bytes and strips private fields before journaling.
+Only the controlled live sender (deepseek.py) supplies a real HTTPS connection
+and a key. The adapter bounds response bytes and strips private fields before journaling.
 """
 import http.client
 import time
@@ -10,8 +10,8 @@ from . import envelope
 from .real_protocol import REQUEST_SECONDS, validate_request
 
 
-def call(body, secret, *, connect):
-    validate_request(body)
+def call(body, secret, *, connect, validate=validate_request):
+    validate(body)
     before=time.monotonic();conn=connect('api.deepseek.com',443,timeout=REQUEST_SECONDS)
     attempted=0
     try:

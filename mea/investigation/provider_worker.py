@@ -8,15 +8,18 @@ from secrets import token_hex
 
 from ..contract import canonical, digest
 from . import authorization, envelope, real_protocol as protocol, spending
-from .real import authorized, compatible, ensure, meta, put_meta, stop
+from .real import MOCK, authorized, compatible, ensure, meta, put_meta, stop
 from .tasks import Store, TERMINAL, event
 
 MODE = authorization.MODE
 
 
 class Broker:
-    def __init__(self, store, *, sender, fault=None):
+    def __init__(self, store, *, sender, fault=None, lane=MOCK):
         self.store = store
+        self.lane = lane
+        self.mode = lane.mode
+        self.live = lane.mode != MODE
         self.sender = sender
         self.fault = fault or (lambda *_: None)
         self.session = token_hex(16)
@@ -32,13 +35,13 @@ class Broker:
                 self.epoch = meta(db, 'epoch')
                 if not self.epoch:
                     raise ValueError('WORKBENCH_NOT_RUNNING')
-                authorization.register(db)
-                spending.initialize(db)
-                spending.ready(db)
-                put_meta(db, 'provider', dict(status='READY', mode=MODE, session=self.session,
+                lane.register(db)
+                lane.spending.initialize(db, lane.ledger_cap)
+                lane.spending.ready(db)
+                put_meta(db, 'provider', dict(status='READY', mode=lane.mode, session=self.session,
                                              epoch=self.epoch, heartbeat=time.time(),
-                                             authorization=authorization.GRANT))
-                for row in store.pending(MODE):
+                                             authorization=lane.grant))
+                for row in store.pending(lane.mode):
                     t = store.get(row['id'])
                     t['activation_revoked'] = True
                     a = t['active']
@@ -71,7 +74,7 @@ class Broker:
     def prepare(self,identifier):
         with self.store.transaction() as db:
             t=self.store.get(identifier)
-            if t['status'] in TERMINAL or t['mode']!=MODE or t['active'] is not None:return None
+            if t['status'] in TERMINAL or t['mode']!=self.mode or t['active'] is not None:return None
             if not authorized(db,t) or t['activation']['session']!=self.session:return None
             if not compatible(t):stop(self.store,db,t,'REAL_POLICY_VERSION_MISMATCH');return None
             if identifier != 'task-' + digest(t['identity']) or digest(t['view'])!=t['identity']['view_sha256'] or t['view']['revisions']!=t['identity']['revisions']:
@@ -79,8 +82,8 @@ class Broker:
             if protocol.remaining(t)<=0:stop(self.store,db,t,'TIME_BUDGET');return None
             if t['usage']['rounds']>=t['budget']['rounds']:stop(self.store,db,t,'REQUEST_BUDGET');return None
             try:
-                grant_key, grant, caps = authorization.ledger(db)
-                authorization.validate_task(t['identity'])
+                grant_key, grant, caps = self.lane.ledger(db)
+                self.lane.validate_task(t['identity'])
             except ValueError as exc:
                 stop(self.store, db, t, str(exc))
                 return None
@@ -95,7 +98,7 @@ class Broker:
             if t['usage']['tokens_accounted']+reservation>t['budget']['tokens']:stop(self.store,db,t,'TOKEN_RESERVATION_BUDGET');return None
             identifier_request = 'request-' + token_hex(16)
             try:
-                money = spending.reserve(db, identifier_request, identifier, body, reservation)
+                money = self.lane.spending.reserve(db, identifier_request, identifier, body, reservation)
             except ValueError as exc:
                 stop(self.store, db, t, str(exc))
                 return None
@@ -103,10 +106,11 @@ class Broker:
                    request_body=body,context_manifest=context_manifest,context_manifest_sha256=digest(context_manifest),token_reservation=reservation,accounted_tokens=reservation,max_output_tokens=protocol.OUTPUT_TOKENS,
                    timeout_seconds=min(protocol.REQUEST_SECONDS,max(.001,protocol.remaining(t))),
                    configured_model=protocol.MODEL,prompt_sha256=protocol.PROMPT_SHA256,receipt=None,
-                   billed_actual='NOT_APPLICABLE_MOCK',cost_source='SIMULATED',shared_spending=money)
+                   billed_actual=self.lane.spending.billed_actual,cost_source='PROVIDER_USAGE_AT_OFFICIAL_PRICE' if self.live else 'SIMULATED',shared_spending=money)
+            if self.live:r['task_prompt_sha256']=digest(protocol.task_prompt(t).encode())
             t['requests'].append(r);t['active']=dict(type='provider_request',request_id=identifier_request)
             t['usage']['rounds']+=1;t['usage']['tokens_accounted']+=reservation;t['status']='RUNNING'
-            event(t,'request_intent','Request intent, token and simulated cost reservations committed before Mock launch.',request_id=identifier_request,token_reservation=reservation)
+            event(t,'request_intent',('Request intent, token and official-price cost reservations committed before the real DeepSeek launch.' if self.live else 'Request intent, token and simulated cost reservations committed before Mock launch.'),request_id=identifier_request,token_reservation=reservation)
             grant['requests'].append(identifier_request);put_meta(db,grant_key,grant);self.store._put(db,t)
         self.fault('after_intent',t)
         return r
@@ -128,8 +132,8 @@ class Broker:
                 if remaining<=0:stop(self.store,db,t,'TIME_BUDGET');return False
                 current = t['requests'][-1]
                 try:
-                    _, grant, _ = authorization.ledger(db)
-                    authorization.validate_task(t['identity'])
+                    _, grant, _ = self.lane.ledger(db)
+                    self.lane.validate_task(t['identity'])
                     if (identifier not in grant['tasks'] or r['id'] not in grant['requests']
                             or current['id'] != r['id'] or current['state'] != 'PREPARED'
                             or current['request_body_sha256'] != digest(current['request_body'])
@@ -137,13 +141,13 @@ class Broker:
                             or identifier != 'task-' + digest(t['identity'])
                             or digest(t['view']) != t['identity']['view_sha256']):
                         raise ValueError('REQUEST_JOURNAL_MISMATCH')
-                    spending.sending(db, r['id'], current['request_body'])
+                    self.lane.spending.sending(db, r['id'], current['request_body'])
                 except ValueError as exc:
                     stop(self.store, db, t, str(exc))
                     return False
                 current['timeout_seconds']=min(current['timeout_seconds'],remaining,protocol.REQUEST_SECONDS)
                 r['timeout_seconds']=current['timeout_seconds']
-                current.update(state='SENDING',started_at=time.time());event(t,'request_started','Mock launch intent committed. Loss of acknowledgement leaves the outcome unknown.',request_id=r['id'])
+                current.update(state='SENDING',started_at=time.time());event(t,'request_started',('Real DeepSeek' if self.live else 'Mock')+' launch intent committed. Loss of acknowledgement leaves the outcome unknown.',request_id=r['id'])
                 self.store._put(db,t)
             self.fault('after_sending_intent',t)
             try:handle=self.sender.start(r['request_body'])
@@ -175,7 +179,7 @@ class Broker:
                 return
             r['receipt'] = value
             r['ended_at'] = time.time()
-            r['shared_spending'] = spending.settle(db, r['id'], value)
+            r['shared_spending'] = self.lane.spending.settle(db, r['id'], value)
             known_error=value.get('error')=='HTTP_ERROR'
             if value.get('error') and not known_error:
                 r['state']='UNCERTAIN'
@@ -197,7 +201,7 @@ class Broker:
                 else:self.store._put(db,t)
                 return
             size=len(canonical(value));t['usage']['output_bytes']+=size
-            event(t,'response_saved','Sanitized Mock response saved before parsing and tool dispatch.',request_id=r['id'])
+            event(t,'response_saved','Sanitized '+('DeepSeek' if self.live else 'Mock')+' response saved before parsing and tool dispatch.',request_id=r['id'])
             if t['status'] not in TERMINAL and t['usage']['output_bytes']>t['budget']['output_bytes']:stop(self.store,db,t,'OUTPUT_BUDGET')
             else:self.store._put(db,t)
 
@@ -210,7 +214,7 @@ class Broker:
                 if p.get('session') == self.session:
                     p['status'] = 'STOPPED'
                     put_meta(db, 'provider', p)
-                for row in self.store.pending(MODE):
+                for row in self.store.pending(self.mode):
                     t = self.store.get(row['id'])
                     if t['activation']['session'] != self.session:
                         continue

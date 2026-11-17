@@ -118,8 +118,11 @@ def validate(data):
         fields(file, 'path base_path status patch sides')
         name = path(file['path'])
         path(file['base_path'])
-        if name in seen or file['status'] not in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'}:
+        if name in seen or file['status'] not in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed', 'context'}:
             raise ValueError('FILE_IDENTITY')
+        # Unchanged context collected beside the change carries no diff.
+        if file['status'] == 'context' and (file['patch'] is not None or file['base_path'] != name):
+            raise ValueError('CONTEXT_FILE_IDENTITY')
         seen.add(name)
         if file['patch'] is not None:
             text(file['patch'], 60000)

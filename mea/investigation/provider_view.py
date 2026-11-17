@@ -3,6 +3,7 @@ from ..contract import canonical, digest
 from .tools import LIMITS as LEGACY_LIMITS, NOTICE, View as LegacyView
 
 TOOL_VERSION = 'frozen-tools-v2-byte-pages'
+CROSS_FILE_TOOL_VERSION = 'frozen-tools-v3-cross-file'
 MAX_READ_LINE = 2**31 - 1
 LIMITS = {key: value for key, value in LEGACY_LIMITS.items() if key != 'snippet_lines'}
 
@@ -47,7 +48,7 @@ class View(LegacyView):
                       status=status,next_start=next_start,blocked_line=start if status=='RESOURCE_INSUFFICIENT' else None,
                       continuation=dict(tool=name,args=dict(args,start=next_start)) if next_start is not None else None,
                       source_sha256=source['sha256'] if source else None,blob_sha=source['blob_sha'] if source else None)
-            value=dict(tool=name,tool_version=TOOL_VERSION,view_sha256=self.sha256,revision=args['revision'],
+            value=dict(tool=name,tool_version=self.tool_version,view_sha256=self.sha256,revision=args['revision'],
                        data=list(data),evidence=list(refs),read=read,unknown=unknown,coverage='COLLECTED_FILES_ONLY',
                        truncated=partial,limits=LIMITS,notice=NOTICE)
             value['content_sha256']=digest(value)
@@ -66,3 +67,13 @@ class View(LegacyView):
                 page=candidate
         if len(canonical(page))>LIMITS['result_bytes']:raise ValueError('TOOL_RESULT_METADATA_BYTE_BOUND')
         return page
+
+
+class CrossFileView(View):
+    """Opt-in cross-file tools: import edges, JS/TS lexical symbols and JS/TS test reads.
+
+    Citations still come only from View.citation, so every reference resolves to a
+    collected file and line of the selected snapshot.
+    """
+    tool_version = CROSS_FILE_TOOL_VERSION
+    cross_file = True

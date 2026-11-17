@@ -147,14 +147,64 @@ class Capture:
         return None
 
     def json(self, path, *, what, file=None, side=None):
+        """(response, data). A 200 whose JSON or structure is unusable is a TRANSPORT gap: (None, None)."""
         response = self.get(path, what=what, file=file, side=side)
         if response is None or response.status != 200:
             return response, None
         try:
-            return response, response.json()
-        except (ValueError, UnicodeError):
+            data = response.json()
+        except (ValueError, UnicodeError, RecursionError):
             self.gap(TRANSPORT, 'MALFORMED_JSON_RESPONSE', file, side, request=what)
             return None, None
+        check = SHAPES.get(what)
+        if check is not None and not check(data):
+            self.gap(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', file, side, request=what)
+            return None, None
+        return response, data
+
+
+def _sha(value):
+    return isinstance(value, str) and bool(re.fullmatch('[0-9a-f]{40}', value))
+
+
+def _optional(value, kind):
+    return value is None or isinstance(value, kind)
+
+
+def _pull(d):
+    return (isinstance(d, dict) and isinstance(d.get('head'), dict) and _sha(d['head'].get('sha'))
+            and isinstance(d.get('base'), dict) and _sha(d['base'].get('sha'))
+            and d.get('state') in ('open', 'closed') and _optional(d.get('title'), str) and _optional(d.get('body'), str)
+            and _optional(d.get('merged'), bool) and _optional(d.get('merged_at'), str))
+
+
+def _commits(d):
+    return isinstance(d, list) and all(isinstance(x, dict) and _sha(x.get('sha')) for x in d)
+
+
+def _compare_file(f):
+    return (isinstance(f, dict) and isinstance(f.get('filename'), str) and isinstance(f.get('status'), str)
+            and _optional(f.get('previous_filename'), str) and _optional(f.get('patch'), str)
+            and _optional(f.get('sha'), str) and (f.get('changes') is None or type(f.get('changes')) is int))
+
+
+def _compare(d):
+    return (isinstance(d, dict) and isinstance(d.get('merge_base_commit'), dict) and _sha(d['merge_base_commit'].get('sha'))
+            and isinstance(d.get('files', []), list) and all(_compare_file(f) for f in d.get('files', [])))
+
+
+def _tree(d):
+    return (isinstance(d, dict) and isinstance(d.get('tree'), list) and _optional(d.get('truncated'), bool)
+            and all(isinstance(e, dict) and isinstance(e.get('path'), str) and isinstance(e.get('type'), str)
+                    and (e.get('size') is None or type(e.get('size')) is int) and _optional(e.get('sha'), str) for e in d['tree']))
+
+
+def _search(d):
+    return (isinstance(d, dict) and isinstance(d.get('items', []), list)
+            and all(isinstance(i, dict) and isinstance(i.get('path'), str) for i in d.get('items', [])))
+
+
+SHAPES = dict(pull=_pull, pull_recheck=_pull, pull_commits=_commits, compare=_compare, tree=_tree, search=_search)
 
 
 def decode_source(capture, data, path, side, expected_blob=None):
@@ -288,8 +338,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
         if data is None:
             continue
         for item in data.get('items', [])[:20]:
-            if isinstance(item, dict) and isinstance(item.get('path'), str):
-                add('callers', item['path'], f'CODE_SEARCH_DEFAULT_BRANCH:{name}')
+            add('callers', item['path'], f'CODE_SEARCH_DEFAULT_BRANCH:{name}')
     for f in files:
         head_side = f['sides'].get('head')
         if not head_side:
@@ -309,9 +358,22 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
 
 
 def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search_pause=0):
-    """Return (report, snapshot). snapshot is None when status is FAILED."""
+    """Return (report, snapshot). snapshot is None when status is FAILED.
+
+    Responses are shape-checked before use. If a response still breaks an assumption,
+    the capture fails as TRANSPORT with every request made so far kept in the report.
+    """
     owner, repo, number, pin = parse_ref(reference)
     c = Capture(fetcher, owner, repo)
+    try:
+        return _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause)
+    except (KeyError, TypeError, AttributeError, IndexError) as exc:
+        gap = c.gap(TRANSPORT, 'UNEXPECTED_RESPONSE_STRUCTURE', request=type(exc).__name__)
+        return dict(schema=SCHEMA, reference=reference, repository=f'{owner}/{repo}', number=number, read_only=True,
+                    status='FAILED', failure=gap, gaps=c.gaps, requests=c.requests), None
+
+
+def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause):
     report = dict(schema=SCHEMA, reference=reference, repository=f'{owner}/{repo}', number=number,
                   read_only=True, status=None, failure=None, gaps=c.gaps, requests=c.requests)
 
@@ -329,7 +391,7 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
         response, commits = c.json(f'{c.base}/pulls/{number}/commits?per_page=100', what='pull_commits')
         if response is None:
             return failed(c.gaps[-1])
-        if not commits or pin not in [x.get('sha') for x in commits]:
+        if pin not in [x['sha'] for x in commits or []]:
             return failed(c.gap(MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
     target_base = pr['base']['sha']
     response, compare = c.json(f'{c.base}/compare/{target_base}...{head}', what='compare')
@@ -391,13 +453,21 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
     if not files:
         return failed(c.gap(MISSING, 'NO_COLLECTABLE_CHANGED_FILE'))
     context = []
+    selection_method = 'imports, test names, GitHub code search (default branch) resolved at the pinned head'
     if not complete:
         report['context_selection'] = dict(status='SKIPPED_INCOMPLETE_CHANGE_LISTING', files=[])
-    elif context_limit > 0 and len(files) < MAX_FILES:
+    elif context_limit <= 0 or len(files) >= MAX_FILES:
+        report['context_selection'] = dict(status='NOT_REQUESTED', files=[])
+    else:
+        before_context = len(c.gaps)
         response, tree = c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree')
-        entries = [e for e in (tree or {}).get('tree', []) if isinstance(e, dict) and e.get('type') == 'blob']
-        if tree and tree.get('truncated'):
-            c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head')
+        if tree is None:
+            if response is not None:  # A definitive 404/422: the pinned tree is not available.
+                c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')
+            tree = {}
+        entries = [e for e in tree.get('tree', []) if e.get('type') == 'blob']
+        if tree.get('truncated'):
+            c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
         picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit, search_pause) if entries else []
         blobs = {e['path']: e.get('sha') for e in entries}
         for path, reason in picks:
@@ -413,9 +483,13 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
             # Unchanged between merge base and head because compare listed every changed path.
             context.append((dict(path=path, base_path=path, status='context', patch=None,
                                  sides=dict(base=dict(source), head=dict(source))), reason))
-        report['context_selection'] = dict(status='COLLECTED', method='imports, test names, GitHub code search (default branch) resolved at the pinned head',
+        # FAILED: no tree, so no context could be selected. PARTIAL: tree, search or a
+        # context read had a gap. COLLECTED: every context request answered.
+        status = 'FAILED' if not entries and not tree.get('tree') else 'PARTIAL' if len(c.gaps) > before_context else 'COLLECTED'
+        report['context_selection'] = dict(status=status, method=selection_method,
                                            files=[dict(path=f['path'], reason=r) for f, r in context],
-                                           candidates_considered=len(picks))
+                                           candidates_considered=len(picks),
+                                           gaps=[dict(g) for g in c.gaps[before_context:]])
     files.extend(f for f, _ in context)
     body = pr.get('body') or ''
     if '\0' in body:
@@ -457,7 +531,8 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
                         state_at_capture=pr['state'], merged_at_capture=bool(pr.get('merged') or pr.get('merged_at')),
                         pending_review_version=pending, capture_sha256=digest(c.requests),
                         source_authentication='NOT_INDEPENDENTLY_VERIFIED'),
-        scope=dict(reported_changed_files=scope_count, complete_listing=complete, omitted_sources=omitted),
+        scope=dict(reported_changed_files=scope_count, complete_listing=complete, omitted_sources=omitted,
+                   capture=capture_scope(c.gaps, report['context_selection']['status'])),
         files=files)
     try:
         validate(snapshot)
@@ -473,6 +548,15 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
     return report, snapshot
 
 
+def capture_scope(gaps, selection):
+    """Typed capture status carried by the snapshot, including gaps without a path (tree, search)."""
+    rows = [dict(kind=g['kind'], code=g['code'][:160], request=g.get('request'), path=g['path'] if g['path'] and accepted(g['path']) else None,
+                 side=g['side'] if g['side'] in ('base', 'head') else None) for g in gaps]
+    return dict(status='INCOMPLETE' if gaps else 'COMPLETE', context_selection=selection,
+                gap_counts={k: sum(g['kind'] == k for g in gaps) for k in (MISSING, TRUNCATED, TRANSPORT)},
+                gaps=rows[:48])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Read-only GitHub PR capture into mea-snapshot-v1')
     parser.add_argument('reference', help='owner/repo#number or owner/repo#number@head-sha')
@@ -480,6 +564,8 @@ def main(argv=None):
     parser.add_argument('--context-files', type=int, default=CONTEXT_FILES)
     args = parser.parse_args(argv)
     report, snapshot = capture(args.reference, RestFetcher(token()), context_limit=args.context_files, search_pause=7)
+    code = 0 if snapshot is not None else 3
+    report['exit_status'] = code
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / 'capture.json').write_bytes(canonical(report))
     if snapshot is not None:
@@ -487,7 +573,7 @@ def main(argv=None):
     print(json.dumps(dict(status=report['status'], failure=report['failure'], gaps=report.get('gap_counts'),
                           counts=report.get('counts'), input_sha256=report.get('input_sha256'), requests=len(report['requests'])),
                      sort_keys=True))
-    return 0 if snapshot is not None else 3
+    return code
 
 
 if __name__ == '__main__':

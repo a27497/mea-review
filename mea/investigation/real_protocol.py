@@ -231,6 +231,20 @@ def tool_parameters(task):
     return native.parameters(tool_profile(task))
 
 
+def request_parameters(task,request):
+    """Response whitelist of one request: the task profile limited to the tools that request declared.
+
+    A finish-only request therefore accepts only finish_investigation. Replayed history uses
+    the whitelist of its own original request.
+    """
+    params=tool_parameters(task)
+    body=request.get('request_body') if isinstance(request,dict) else None
+    tools=body.get('tools') if isinstance(body,dict) else None
+    if not isinstance(tools,list):return params
+    declared={t['function']['name'] for t in tools if isinstance(t,dict) and isinstance(t.get('function'),dict)}
+    return {name:schema for name,schema in params.items() if name in declared}
+
+
 def view_class(task):
     from .provider_view import View, CrossFileView
     return CrossFileView if tool_profile(task) else View
@@ -303,7 +317,7 @@ def prior_ids(task,index):
 
 
 def bound_calls(task,index):
-    r=task['requests'][index];batch=decisions(r['receipt'],prior_ids(task,index),tool_parameters(task))
+    r=task['requests'][index];batch=decisions(r['receipt'],prior_ids(task,index),request_parameters(task,r))
     if r.get('native_calls')!=[c for d,c in batch] or not r.get('decision_applied'):
         raise ValueError('NATIVE_JOURNAL_CALL_MISMATCH')
     if len(batch)==1 and r.get('native_call')!=batch[0][1]:raise ValueError('NATIVE_JOURNAL_CALL_MISMATCH')
@@ -333,6 +347,10 @@ def prepare_request(task):
         coverage='Only supplied collected files; uncollected source, runtime behavior and dynamic uses UNKNOWN')
     if profile and profile['pull_request']:
         context['pull_request']=pull_request_text(view['pr'],profile['description_bytes'])
+    capture=view['coverage'].get('capture') if isinstance(view.get('coverage'),dict) else None
+    if capture is not None:
+        # Typed capture status from the snapshot, so a failed tree or search is not read as "no context".
+        context['capture']=copy.deepcopy(capture)
     batches=[]
     # Only committed, verified assistant/tool pairs enter history. Never insert
     # fabricated calls or omit a reply while leaving its assistant call behind.

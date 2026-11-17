@@ -55,7 +55,7 @@ class View(LegacyView):
                       continuation=dict(tool=name,args=dict(args,start=next_start)) if next_start is not None else None,
                       source_sha256=source['sha256'] if source else None,blob_sha=source['blob_sha'] if source else None)
             value=dict(tool=name,tool_version=self.tool_version,view_sha256=self.sha256,revision=args['revision'],
-                       data=list(data),evidence=list(refs),read=read,unknown=unknown,coverage='COLLECTED_FILES_ONLY',
+                       data=list(data),evidence=list(refs),read=read,unknown=unknown+self.capture_unknown(),coverage='COLLECTED_FILES_ONLY',
                        truncated=partial,limits=self.limits,notice=NOTICE)
             value['content_sha256']=digest(value)
             return value

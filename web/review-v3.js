@@ -496,6 +496,13 @@ function renderCompleted(n, t) {
   const rest = final?.match(/Remaining risk.*$/i)?.[0];
   if (rest) unknown.append(detail('Reported limitations',el('p',rest)));
   if (!t.view.coverage.complete_listing) unknown.append(el('p','The frozen file listing is incomplete.','rail-sub'));
+  const capture = t.view.coverage.capture;
+  if (capture && capture.status !== 'COMPLETE') {
+    const counts = Object.entries(capture.gap_counts).filter(([,v]) => v).map(([k,v]) => v + ' ' + k).join(', ');
+    const row = el('p','Snapshot capture incomplete · context selection ' + capture.context_selection + ' · ' + counts + '.','rail-sub');
+    row.id = 'capture-status';
+    unknown.append(row, detail('Capture gaps', ...capture.gaps.map(g => el('p', [g.kind, g.code, g.request, g.path].filter(Boolean).join(' · '), 'mono'))));
+  }
   if (t.candidates.length) block(n,'Candidates',
     ...t.candidates.map(c => locationCard(c.change,t,c.title,name(c.change.path) + ':' + c.change.line,true)),
     action('Open human review', async () => {

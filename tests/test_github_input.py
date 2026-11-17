@@ -1,12 +1,18 @@
 """GitHub PR read-only capture from an offline fixture. No network."""
+from contextlib import redirect_stdout
+import io
 import json
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 import unittest
 
 from mea.contract import digest, validate
 from mea.github_input import (MISSING, TRANSPORT, TRUNCATED, Response, RestFetcher, TransportError,
                               capture, parse_ref)
+from mea import github_input
 from mea.investigation.provider_view import CrossFileView
+from mea.review import review
 import github_fixtures as fx
 
 REF = f'{fx.OWNER}/{fx.REPO}#{fx.NUMBER}'
@@ -42,7 +48,9 @@ class GithubInputTests(unittest.TestCase):
         reasons = {r['path']: r['reason'] for r in report['context_selection']['files']}
         self.assertTrue(reasons['tests/test_pricing.py'].startswith('TEST_NAME_MATCH'))
         self.assertTrue(reasons['shop/cart.py'].startswith('CODE_SEARCH_DEFAULT_BRANCH'))
-        self.assertEqual(snapshot['scope'], dict(reported_changed_files=len(snapshot['files']), complete_listing=True, omitted_sources=[]))
+        self.assertEqual(snapshot['scope'], dict(reported_changed_files=len(snapshot['files']), complete_listing=True, omitted_sources=[],
+                                                 capture=dict(status='COMPLETE', context_selection='COLLECTED',
+                                                              gap_counts={MISSING: 0, TRUNCATED: 0, TRANSPORT: 0}, gaps=[])))
         self.assertEqual(snapshot['provenance']['kind'], 'KNOWN_HISTORICAL_DEVELOPMENT')
         self.assertEqual(snapshot['provenance']['capture_sha256'], digest(report['requests']))
         self.assertEqual(report['input_sha256'], digest(snapshot))
@@ -129,6 +137,98 @@ class GithubInputTests(unittest.TestCase):
         # A missing PR is not a transport failure.
         report, snapshot = capture(REF, fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': Response(404, b'{}')}), now=0)
         self.assertEqual((report['failure']['kind'], report['failure']['code']), (MISSING, 'PULL_HTTP_404'))
+
+    def test_tree_failure_is_a_typed_snapshot_gap_and_failed_context_selection(self):
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: Response(503, b'{}')}), now=0)
+        self.assertEqual(report['status'], 'INCOMPLETE')
+        self.assertEqual(report['context_selection']['status'], 'FAILED')
+        self.assertEqual(report['counts']['context_included'], 0)
+        validate(snapshot)
+        # No path, so omitted_sources stays empty; the typed capture status carries the gap.
+        self.assertEqual(snapshot['scope']['omitted_sources'], [])
+        self.assertTrue(snapshot['scope']['complete_listing'])
+        self.assertEqual(snapshot['scope']['capture'], dict(
+            status='INCOMPLETE', context_selection='FAILED', gap_counts={MISSING: 0, TRUNCATED: 0, TRANSPORT: 1},
+            gaps=[dict(kind=TRANSPORT, code='HTTP_503', request='tree', path=None, side=None)]))
+        view = CrossFileView.from_input(snapshot)
+        result = view.execute('search', dict(query='total', revision=fx.HEAD))
+        self.assertIn('SNAPSHOT_CAPTURE_INCOMPLETE:context_selection=FAILED', result['unknown'])
+        page = view.execute('read_source', dict(path='shop/pricing.py', revision=fx.HEAD, start=1, end=2))
+        self.assertIn('CAPTURE_GAP:TRANSPORT:HTTP_503:tree:-', page['unknown'])
+        abstentions = review(snapshot)['abstentions']
+        self.assertIn(dict(path=None, reason='TRANSPORT:HTTP_503', request='tree'), abstentions)
+        self.assertEqual(next(a for a in abstentions if a['reason'] == 'CAPTURE_INCOMPLETE')['context_selection'], 'FAILED')
+        # A 404 tree is MISSING, still a failed selection.
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: Response(404, b'{}')}), now=0)
+        self.assertEqual(snapshot['scope']['capture']['gaps'][0]['kind'], MISSING)
+        self.assertEqual(snapshot['scope']['capture']['context_selection'], 'FAILED')
+
+    def test_code_search_failure_marks_context_selection_partial(self):
+        class SearchDown(fx.Fetcher):
+            def get(self, path, accept):
+                if path.startswith('/search/code'):
+                    self.calls.append((path, accept))
+                    return Response(403, b'{"message":"rate limit"}')
+                return super().get(path, accept)
+        report, snapshot = capture(REF, SearchDown(), now=0)
+        cap = snapshot['scope']['capture']
+        self.assertEqual((cap['status'], cap['context_selection']), ('INCOMPLETE', 'PARTIAL'))
+        self.assertEqual(cap['gaps'][0], dict(kind=TRANSPORT, code='HTTP_403_FORBIDDEN_OR_RATE_LIMITED', request='search', path=None, side='head'))
+        self.assertEqual(report['context_selection']['status'], 'PARTIAL')
+        self.assertNotIn('shop/cart.py', [f['path'] for f in snapshot['files']])  # Its only route was search.
+        self.assertIn('tests/test_pricing.py', [f['path'] for f in snapshot['files']])
+        malformed = fx.Fetcher(overrides={})
+        original = malformed.get
+        malformed.get = lambda path, accept: Response(200, b'{"items": "x"}') if path.startswith('/search/code') else original(path, accept)
+        report, snapshot = capture(REF, malformed, now=0)
+        self.assertEqual(snapshot['scope']['capture']['gaps'][0]['code'], 'MALFORMED_RESPONSE_STRUCTURE')
+
+    def test_capture_status_contract(self):
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        bad = json.loads(json.dumps(snapshot))
+        bad['scope']['capture']['gaps'] = [dict(kind=TRANSPORT, code='HTTP_503', request='tree', path=None, side=None)]
+        with self.assertRaisesRegex(ValueError, 'CAPTURE_GAP_BOUND'):
+            validate(bad)
+        bad['scope']['capture'].update(status='INCOMPLETE', gap_counts={MISSING: 0, TRUNCATED: 0, TRANSPORT: 1})
+        with self.assertRaisesRegex(ValueError, 'CAPTURE_CONTEXT_SELECTION'):
+            validate(bad)  # COLLECTED cannot carry a tree gap.
+        bad['scope']['capture']['gaps'][0]['kind'] = 'OTHER'
+        with self.assertRaisesRegex(ValueError, 'CAPTURE_GAP'):
+            validate(bad)
+        legacy = json.loads(json.dumps(snapshot))
+        del legacy['scope']['capture']
+        validate(legacy)  # Snapshots without the field stay valid.
+
+    def test_wrong_structure_responses_fail_as_transport(self):
+        pull = f'{BASE}/pulls/{fx.NUMBER}'
+        compare = f'{BASE}/compare/{fx.TARGET_BASE}...{fx.HEAD}'
+        commits = f'{BASE}/pulls/{fx.NUMBER}/commits?per_page=100'
+        no_head = fx.Fetcher().pull()
+        del no_head['head']['sha']
+        cases = [(REF, {pull: {}}, 'pull'), (REF, {pull: no_head}, 'pull'), (REF, {pull: dict(fx.Fetcher().pull(), head=dict(sha='abc'))}, 'pull'),
+                 (REF, {compare: {}}, 'compare'), (REF, {compare: dict(merge_base_commit=dict(sha=fx.MERGE_BASE), files=[dict(filename=1)])}, 'compare'),
+                 (REF + '@' + fx.HEAD, {commits: {'sha': fx.HEAD}}, 'pull_commits')]
+        for reference, overrides, what in cases:
+            report, snapshot = capture(reference, fx.Fetcher(overrides=overrides), now=0)
+            self.assertIsNone(snapshot)
+            self.assertEqual((report['status'], report['failure']['kind'], report['failure']['code'], report['failure']['request']),
+                             ('FAILED', TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', what))
+            self.assertEqual(report['requests'][-1]['http_status'], 200)
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: {'tree': 'x'}}), now=0)
+        self.assertEqual(snapshot['scope']['capture']['context_selection'], 'FAILED')
+        self.assertEqual(snapshot['scope']['capture']['gaps'][0]['code'], 'MALFORMED_RESPONSE_STRUCTURE')
+
+    def test_cli_writes_the_failed_capture_before_a_nonzero_exit(self):
+        with tempfile.TemporaryDirectory() as out, \
+                patch('mea.github_input.RestFetcher', lambda *a, **k: fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': {}})), \
+                patch('mea.github_input.token', lambda: None), redirect_stdout(io.StringIO()):
+            self.assertEqual(github_input.main([REF, '--out-dir', out]), 3)
+            report = json.loads((Path(out) / 'capture.json').read_text())
+            self.assertFalse((Path(out) / 'snapshot.json').exists())
+        self.assertEqual((report['status'], report['exit_status'], report['failure']['code']), ('FAILED', 3, 'MALFORMED_RESPONSE_STRUCTURE'))
+        self.assertEqual([r['path'] for r in report['requests']], [f'{BASE}/pulls/{fx.NUMBER}'])
 
     def test_patch_inconsistent_with_pinned_source_is_dropped(self):
         fetcher = fx.Fetcher()

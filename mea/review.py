@@ -95,6 +95,14 @@ def review(snapshot):
         abstentions.append(dict(path=None, reason='FILE_LIST_INCOMPLETE'))
     for row in data['scope']['omitted_sources']:
         abstentions.append(dict(path=row['path'], reason=row['reason'], side=row['side']))
+    capture = data['scope'].get('capture')
+    if capture and capture['status'] != 'COMPLETE':
+        # Gaps without a path (tree, code search) never appear in omitted_sources.
+        abstentions.append(dict(path=None, reason='CAPTURE_INCOMPLETE', context_selection=capture['context_selection'],
+                                gap_counts=copy.deepcopy(capture['gap_counts'])))
+        for row in capture['gaps']:
+            if row['path'] is None:
+                abstentions.append(dict(path=None, reason=row['kind'] + ':' + row['code'], request=row['request']))
     if len(findings) > MAX_FINDINGS:
         abstentions.append(dict(path=None, reason='FINDING_LIMIT', omitted=len(findings)-MAX_FINDINGS))
     if len(observations) > MAX_OBSERVATIONS:

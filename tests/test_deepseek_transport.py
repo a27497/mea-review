@@ -164,6 +164,55 @@ class LiveLaneTests(unittest.TestCase):
         self.assertEqual(bodies[-1]['tools'], p.terminal_tools(native.CROSS_FILE))
         self.assertEqual([b['tool_choice'] for b in bodies], ['required'] * 5 + [p.FINISH_CHOICE])
 
+    def test_undeclared_tool_on_a_finish_only_request_is_refused(self):
+        def plan(body):
+            # A provider that ignores the declared tools and the named tool_choice.
+            rev = json.loads(body['messages'][1]['content'])['revisions']['head']
+            n = len(expanded_feedback(body)) + 1
+            return completion([call(f'c{n}', 'read_source', path='shop/cart.py', revision=rev, start=1, end=n)])
+        store, task = self.start(plan)
+        self.assertEqual((task['status'], task['reason']), ('STOPPED', 'TOOL_NOT_ALLOWED'))
+        bodies = [json.loads(post['body']) for post in FakeConnection.posts]
+        self.assertEqual(len(bodies), 6)  # No request after the refusal.
+        self.assertEqual(bodies[-1]['tools'], p.terminal_tools(native.CROSS_FILE))
+        self.assertEqual(task['usage']['tools'], 5)  # The sixth response executed nothing.
+        self.assertEqual(len(task['results']), 5)
+        last = task['requests'][-1]
+        self.assertFalse(last.get('decision_applied'))
+        refused = [e for e in task['events'] if e['kind'] == 'undeclared_tool_refused']
+        self.assertEqual(refused[0]['declared_tools'], [native.FINISH])
+        rejected = [e for e in task['events'] if e['kind'] == 'decision_rejected'][-1]
+        self.assertEqual((rejected['rejection_code'], rejected['diagnostic']['stage']), ('NATIVE_FUNCTION_NOT_ALLOWED', 'TOOL_NOT_ALLOWED'))
+        # Earlier requests replay under their own full schema.
+        self.assertEqual(len(p.bound_calls(task, 4)), 1)
+        self.assertEqual(p.request_parameters(task, task['requests'][0]), native.parameters(native.CROSS_FILE))
+        self.assertEqual(set(p.request_parameters(task, last)), {native.FINISH})
+
+    def test_capture_gaps_reach_the_model_and_tool_results(self):
+        from github_fixtures import Fetcher, HEAD, NUMBER, OWNER, REPO
+        from mea.github_input import Response, capture
+        tree = f'/repos/{OWNER}/{REPO}/git/trees/{HEAD}?recursive=1'
+        report, snapshot = capture(f'{OWNER}/{REPO}#{NUMBER}', Fetcher(overrides={tree: Response(503, b'{}')}), now=0)
+        self.input = snapshot
+        self.lane = authorization.live(scope([digest(snapshot)]))
+        seen = {}
+
+        def plan(body):
+            context = json.loads(body['messages'][1]['content'])
+            feedback = expanded_feedback(body)
+            if not feedback:
+                seen['capture'] = context['capture']
+                return completion([call('s1', 'search', query='total', revision=context['revisions']['head'])])
+            seen['unknown'] = feedback[0]['unknown']
+            return completion([call('end', native.FINISH, reason='EVIDENCE_INSUFFICIENT', candidates=[])])
+        store, task = self.start(plan)
+        self.assertEqual(task['reason'], 'EVIDENCE_INSUFFICIENT')
+        self.assertEqual((seen['capture']['status'], seen['capture']['context_selection']), ('INCOMPLETE', 'FAILED'))
+        self.assertEqual(seen['capture']['gaps'], [dict(kind='TRANSPORT', code='HTTP_503', request='tree', path=None, side=None)])
+        self.assertIn('SNAPSHOT_CAPTURE_INCOMPLETE:context_selection=FAILED', seen['unknown'])
+        self.assertIn('CAPTURE_GAP:TRANSPORT:HTTP_503:tree:-', seen['unknown'])
+        self.assertEqual(task['view']['coverage']['capture']['context_selection'], 'FAILED')
+
     def test_http_error_stops_without_retry(self):
         store, task = self.start(lambda body: (500, b'{"error":{"message":"server"}}'))
         self.assertEqual((task['status'], task['reason']), ('STOPPED', 'PROVIDER_HTTP_ERROR'))

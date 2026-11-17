@@ -197,6 +197,19 @@ class View:
         return cls(dict(schema='mea-investigation-view-v1', pr=value['pr'], revisions=value['revisions'],
                         input_sha256=digest(value), files=files, coverage=value['scope']))
 
+    def capture_unknown(self):
+        """Snapshot capture gaps, including those without a path, repeated in every tool result.
+
+        Snapshots without a typed capture status keep their previous tool results exactly.
+        """
+        coverage=self.value['coverage']
+        cap=coverage.get('capture') if isinstance(coverage,dict) else None
+        if not cap or cap['status']=='COMPLETE':return []
+        rows=['SNAPSHOT_CAPTURE_INCOMPLETE:context_selection='+cap['context_selection']]
+        rows+=[f"CAPTURE_GAP:{g['kind']}:{g['code']}:{g['request'] or '-'}:{g['path'] or '-'}" for g in cap['gaps'][:8]]
+        if len(cap['gaps'])>8 or sum(cap['gap_counts'].values())>len(cap['gaps']):rows.append('CAPTURE_GAPS_NOT_LISTED_HERE')
+        return rows
+
     def citation(self, side, path, line):
         s=self.sources[side,path]; rows=s['text'].splitlines()
         if type(line) is not int or not 1<=line<=len(rows):
@@ -265,6 +278,7 @@ class View:
         return self.result('related_files',args,data,refs,unknown,truncated)
 
     def result(self, name, args, data, refs, unknown, truncated):
+        unknown=unknown+self.capture_unknown()
         result=dict(tool=name,tool_version=self.tool_version,view_sha256=self.sha256,revision=args['revision'],
                     data=data,evidence=refs,unknown=unknown,coverage='COLLECTED_FILES_ONLY',truncated=truncated,limits=self.limits,notice=NOTICE)
         result['content_sha256']=digest(result)

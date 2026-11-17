@@ -103,9 +103,20 @@ changed files, and are always read at the pinned head.
 means the evidence is absent or unusable, for example 404, binary or not UTF-8.
 TRUNCATED means a bound cut existing evidence, such as an omitted provider
 patch or an oversized source. TRANSPORT means no definitive answer, for example
-a network error, 401/403/429 or 5xx. `snapshot.json` is a mea-snapshot-v1 input
-and lists each gap in `omitted_sources`. Real PR snapshots belong in private
-storage, not in this repository.
+a network error, 401/403/429, 5xx, or a 200 response whose JSON or required
+fields are unusable. A failed capture still writes `capture.json` with its
+requests and `exit_status`, and the command exits 3.
+
+`snapshot.json` is a mea-snapshot-v1 input. `omitted_sources` lists only gaps
+tied to a file path and side. `scope.capture` carries the typed capture
+status: COMPLETE or INCOMPLETE, the context selection result, per-kind gap
+counts and every gap, including those without a path such as a failed tree or
+code search request. Context selection is COLLECTED, PARTIAL (some tree,
+search or context read failed), FAILED (no usable tree),
+SKIPPED_INCOMPLETE_CHANGE_LISTING or NOT_REQUESTED. Tool results, the first
+model request, the static report and Review v3 repeat an incomplete capture
+status. Snapshots without `scope.capture` remain valid. Real PR snapshots
+belong in private storage, not in this repository.
 
 ## Run the controlled real DeepSeek lane
 
@@ -134,7 +145,9 @@ The `cross-file-tools-v1` profile adds `related_files` (import edges between
 collected files, each citing its import line), JavaScript/TypeScript lexical
 `find_symbol` and `references`, JS/TS test reads and 80-line source pages
 bounded by the bytes the model sees. Its last request offers only
-`finish_investigation`. Candidates still validate only against cited lines that
+`finish_investigation`. Each response is parsed against the tools its own
+request declared. A response that calls an undeclared tool executes nothing and
+stops the task as TOOL_NOT_ALLOWED. Candidates still validate only against cited lines that
 exist in the selected snapshot and were returned to the model. Tasks without
 the profile keep the previous tool schema and pages.
 

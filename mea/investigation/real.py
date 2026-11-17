@@ -208,7 +208,8 @@ class Coordinator:
                 if value.get('finish_reason')!='tool_calls':
                     stop(self.store,db,t,'PROVIDER_OUTPUT_INCOMPLETE');return False
                 try:
-                    batch=protocol.decisions(value,protocol.prior_ids(t,len(t['requests'])-1),protocol.tool_parameters(t))
+                    declared=protocol.request_parameters(t,r)
+                    batch=protocol.decisions(value,protocol.prior_ids(t,len(t['requests'])-1),declared)
                     view=protocol.view_class(t)(t['view'])
                     if view.sha256!=t['identity']['view_sha256']:raise ValueError('VIEW_IDENTITY_MISMATCH')
                     # Atomic admission of the complete batch. An invalid later
@@ -222,7 +223,17 @@ class Coordinator:
                 except (ValueError,KeyError,TypeError,UnicodeError,RecursionError) as exc:
                     event(t,'decision_rejected','Complete native call batch rejected before dispatch; no repair request.',request_id=r['id'],rejection_code=str(exc),
                           diagnostic=getattr(exc,'diagnostic',dict(stage='MODEL_ARGUMENTS',code=str(exc),path='$.message.tool_calls')))
-                    stop(self.store,db,t,'TOOL_BUDGET' if str(exc)=='TOOL_BUDGET' else 'INVALID_MODEL_DECISION');return False
+                    reason='TOOL_BUDGET' if str(exc)=='TOOL_BUDGET' else 'INVALID_MODEL_DECISION'
+                    if str(exc)=='NATIVE_FUNCTION_NOT_ALLOWED':
+                        # A tool of the task profile that this request did not declare (for example a
+                        # source read answering a finish-only request) is refused, never dispatched.
+                        try:
+                            protocol.decisions(value,protocol.prior_ids(t,len(t['requests'])-1),protocol.tool_parameters(t))
+                            reason='TOOL_NOT_ALLOWED'
+                            event(t,'undeclared_tool_refused','Provider returned a tool this request did not declare; nothing was executed.',
+                                  request_id=r['id'],declared_tools=sorted(protocol.request_parameters(t,r)))
+                        except (ValueError,KeyError,TypeError,UnicodeError,RecursionError):pass
+                    stop(self.store,db,t,reason);return False
                 d,call=batch[0]
                 t['active']=dict(type='frozen_tool' if d['kind']=='tool' else 'finish',decision=d,started=False,call_index=0)
                 r.update(decision_applied=True,native_calls=[c for d,c in batch],tool_messages=[],result_indices=[],result_sha256s=[])

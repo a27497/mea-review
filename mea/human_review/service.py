@@ -1,4 +1,8 @@
-"""Manual review preparation and source-bound incremental revisions. No live writes."""
+"""Manual review preparation and source-bound incremental revisions.
+
+The default remote is the local Mock. A LiveGitHub remote is only injected by the
+attended command-line lane (mea.github_writeback); the workbench never has one.
+"""
 import copy
 import json
 from ..contract import digest,canonical,fields,text
@@ -6,7 +10,8 @@ from ..investigation.tools import View
 from ..investigation.validation import validate_candidates
 from .store import ensure,get,put,record,event,rows
 from .mock_github import MockGitHub,TARGET
-from . import demo,compare
+from .remote import binding,is_live
+from . import demo,compare,rereview
 
 
 def task_checked(store,identifier):
@@ -22,8 +27,9 @@ def task_checked(store,identifier):
 
 
 class Service:
-    def __init__(self,store):
-        self.store=store;ensure(store);self.remote=MockGitHub(store)
+    def __init__(self,store,remote=None):
+        self.store=store;ensure(store);self.remote=remote if remote is not None else MockGitHub(store)
+        self.live=is_live(self.remote)
 
     def recover(self):
         # A second server must not classify another process's live preparation
@@ -44,17 +50,18 @@ class Service:
             value=get(db,identifier,'review');value['drafts']=rows(db,'draft',identifier)
             value['sends']=rows(db,'send',identifier)
         value['tasks']=[self.store.get(v['task_id']) for v in value['versions']]
-        value['live_publish']='DISABLED_NO_AUTHORIZED_REPOSITORY_OR_CREDENTIALS'
+        value['live_publish']='COMMAND_LINE_ALLOWLIST_ONLY' if self.live else 'DISABLED_NO_AUTHORIZED_REPOSITORY_OR_CREDENTIALS'
         return value
 
     def create(self,task_id):
         t,v=task_checked(self.store,task_id);identity=dict(task_id=task_id,view_sha256=v.sha256)
-        value=record('review',identity,pr=t['pr'],mode='MOCK_OWNED_REVIEW' if demo.registered(t) else 'LOCAL_PREVIEW_ONLY',versions=[dict(task_id=task_id,view_sha256=v.sha256,revisions=v.value['revisions'])],comparisons=[])
+        mode='LIVE_GITHUB_REVIEW' if self.live and self.remote.admits(t['pr']) else 'MOCK_OWNED_REVIEW' if demo.registered(t) else 'LOCAL_PREVIEW_ONLY'
+        value=record('review',identity,pr=t['pr'],mode=mode,versions=[dict(task_id=task_id,view_sha256=v.sha256,revisions=v.value['revisions'])],comparisons=[])
         with self.store.transaction() as db:
             exists=db.execute('select 1 from human_records where id=?',(value['id'],)).fetchone()
             if not exists:
                 event(value,'created','Local human review workspace; no model request and live publication disabled.');put(db,value)
-        if demo.registered(t):self.remote.provision(t)
+        if demo.registered(t) and not self.live:self.remote.provision(t)
         return self.open(value['id'])
 
     def draft(self,review_id,task_id,candidate_id):
@@ -64,6 +71,11 @@ class Service:
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         c=next((c for c in t['candidates'] if c['id']==candidate_id),None)
         if not c:raise ValueError('CANDIDATE_NOT_FOUND')
+        for check in review.get('rereviews',[]):
+            row=next((x for x in check['candidates'] if check['new_task_id']==task_id and x['candidate_id']==candidate_id),None)
+            # An outdated comment is never relocated, and a sent comment is never repeated.
+            if row and row['status']=='DUPLICATE_OF_SENT_COMMENT':raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
+            if row and row['status']=='AT_OUTDATED_COMMENT_LOCATION':raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
         value=record('draft',dict(review_id=review_id,task_id=task_id,candidate_id=candidate_id),review_id=review_id,task_id=task_id,candidate_id=candidate_id,revision=1,history=[],status='DRAFT',confirmation=None,anchor=copy.deepcopy(c['change']),body=f'{c["title"]}\n\nTrigger: {c["trigger"]}\nImpact: {c["impact"]}\n\nConditional inference; correctness UNADJUDICATED.',source_kind=t['mode'])
         with self.store.transaction() as db:
             try:return get(db,value['id'],'draft')
@@ -80,7 +92,7 @@ class Service:
             if body==d['body'] and anchor==d['anchor']:return d
             if len(d['history'])>=16:raise ValueError('DRAFT_REVISION_BOUND')
             d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
-            d.update(body=body,anchor=copy.deepcopy(anchor),revision=d['revision']+1,confirmation=None,status='DRAFT')
+            d.update(body=body,anchor=copy.deepcopy(anchor),revision=d['revision']+1,confirmation=None,approval=None,status='DRAFT')
             self.payload(d);event(d,'edited','Final text or anchor changed; previous confirmation invalidated.');put(db,d)
         return d
 
@@ -90,6 +102,7 @@ class Service:
         candidate=next((c for c in t['candidates'] if c['id']==d['candidate_id']),None)
         if not candidate:raise ValueError('CANDIDATE_NOT_FOUND')
         a=d['anchor'];fields(a,'path side line revision')
+        if a['side']=='base' and self.incremental(d):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')
         if a['side'] not in {'head','base'} or type(a['line']) is not int or a['revision']!=v.value['revisions'][a['side']] or (a['side'],a['path'],a['line']) not in v.changes:raise ValueError('COMMENT_DIFF_ANCHOR_INVALID')
         citation=v.citation(a['side'],a['path'],a['line'])
         if citation not in candidate['citations']:raise ValueError('COMMENT_ANCHOR_NOT_CANDIDATE_EVIDENCE')
@@ -98,14 +111,23 @@ class Service:
         return dict(target=target,mock_admitted=demo.registered(t),pr_url=t['pr']['url'],view_sha256=v.sha256,task_id=t['id'],draft_revision=d['revision'],evidence=citation,
                     payload=dict(commit_id=v.value['revisions']['head'],path=file['path'],line=a['line'],side='RIGHT' if a['side']=='head' else 'LEFT',body=d['body']))
 
-    @staticmethod
-    def remote_identity(remote):
-        return {k:copy.deepcopy(remote[k]) for k in ['identity','head','base','state','can_comment','can_read','principal','generation','complete_listing']}|dict(comments_sha256=digest(remote['comments']))
+    def incremental(self,d):
+        # The base side of an increment snapshot is the previous head, not the PR merge base.
+        with self.store.connection() as db:r=get(db,d['review_id'],'review')
+        versions=r['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==d['task_id'])
+        return index>0 and versions[index]['revisions']['base']==versions[index-1]['revisions']['head']
+
+    def remote_identity(self,remote):
+        return copy.deepcopy(self.remote.identity_of(remote))
+
+    def admitted(self,value):
+        return self.remote.admits(value['target']) if self.live else value['target']==TARGET and value['mock_admitted']
 
     def preview(self,identifier):
         with self.store.connection() as db:d=get(db,identifier,'draft')
-        value=self.payload(d);value.update(mode='MOCK_GITHUB_NOT_LIVE' if value['target']==TARGET and value['mock_admitted'] else 'LOCAL_PREVIEW_ONLY',draft_id=d['id'],correctness='UNADJUDICATED',live_publish=False)
-        if value['target']==TARGET and value['mock_admitted']:
+        value=self.payload(d);admitted=self.admitted(value)
+        value.update(mode=self.remote.mode if admitted else 'LOCAL_PREVIEW_ONLY',draft_id=d['id'],correctness='UNADJUDICATED',live_publish=self.live and admitted)
+        if admitted:
             remote=self.remote.read(value['target']);self.admit_remote(value,remote)
             value['remote_identity']=self.remote_identity(remote)
         else:value['remote_identity']=None
@@ -122,18 +144,30 @@ class Service:
         if not remote['can_comment'] or remote['state']!='open':raise ValueError('REMOTE_PERMISSION_OR_STATE')
         if not remote['complete_listing']:raise ValueError('REMOTE_DUPLICATES_UNKNOWN')
         if any(all(c.get(k)==value['payload'][k] for k in ['commit_id','path','line','side']) for c in remote['comments']):raise ValueError('DUPLICATE_REMOTE_ANCHOR')
+        p=value['payload']
+        if 'commentable' in remote and p['line'] not in remote['commentable'].get(p['path'],{}).get(p['side'],[]):raise ValueError('REMOTE_DIFF_ANCHOR_INVALID')
 
-    def confirm(self,identifier,preview,human_confirmed):
+    def confirm(self,identifier,preview,human_confirmed,approval=None):
         if human_confirmed is not True:raise ValueError('EXPLICIT_HUMAN_CONFIRMATION_REQUIRED')
+        if self.live:
+            # The live lane needs the recorded human decision for this exact binding.
+            fields(approval,'reference binding_sha256');text(approval['reference'],500)
+            if not approval['reference'].strip():raise ValueError('HUMAN_APPROVAL_REFERENCE_REQUIRED')
+        elif approval is not None:raise ValueError('APPROVAL_ONLY_FOR_LIVE')
         fresh=self.preview(identifier)
         if preview!=fresh:raise ValueError('CONFIRMATION_SNAPSHOT_CHANGED')
-        if fresh['mode']!='MOCK_GITHUB_NOT_LIVE':raise ValueError('LIVE_PUBLISH_DISABLED_NO_TARGET')
+        if fresh['mode']!=self.remote.mode:raise ValueError('LIVE_PUBLISH_DISABLED_NO_TARGET')
+        if self.live and approval['binding_sha256']!=binding(fresh):raise ValueError('HUMAN_APPROVAL_BINDING_MISMATCH')
         with self.store.transaction() as db:
             d=get(db,identifier,'draft')
             if d.get('intent_id'):raise ValueError('DRAFT_HAS_SEND_INTENT')
             # Re-read source/body/revision under the same local write transaction.
             if self.payload(d)!= {k:fresh[k] for k in self.payload(d)}:raise ValueError('CONFIRMATION_SNAPSHOT_CHANGED')
-            d.update(status='CONFIRMED_MOCK_ONLY',confirmation=copy.deepcopy(fresh));event(d,'confirmed','Explicit local user confirmation binds repository, PR, head, diff anchor, final body and remote permission snapshot. Mock only.',confirmation_snapshot=copy.deepcopy(fresh));put(db,d)
+            if self.live:
+                d.update(status=self.remote.confirmed,confirmation=copy.deepcopy(fresh),approval=dict(approval));event(d,'confirmed','Recorded human approval binds repository, PR, head, file, line, side and exact body; remote permission snapshot read live.',confirmation_snapshot=copy.deepcopy(fresh),approval=dict(approval))
+            else:
+                d.update(status='CONFIRMED_MOCK_ONLY',confirmation=copy.deepcopy(fresh));event(d,'confirmed','Explicit local user confirmation binds repository, PR, head, diff anchor, final body and remote permission snapshot. Mock only.',confirmation_snapshot=copy.deepcopy(fresh))
+            put(db,d)
         return d
 
     def increment(self,review_id,new_task_id):
@@ -151,7 +185,24 @@ class Service:
             for d in rows(db,'draft',review_id):
                 if d['review_id']==review_id and not d.get('intent_id') and d.get('confirmation'):
                     event(d,'version_changed','New frozen review version invalidated the old confirmation.',previous_confirmation=d['confirmation'])
-                    d.update(confirmation=None,status='DRAFT');put(db,d)
+                    d.update(confirmation=None,approval=None,status='DRAFT');put(db,d)
+        return self.open(review_id)
+
+    def rereview(self,review_id,new_task_id,observed=None):
+        """Link an incremental frozen version and check every sent comment's anchor against it.
+
+        observed is an optional read-only remote listing (LiveGitHub.read) recorded next to the
+        local anchor result. Nothing is sent, moved or edited."""
+        self.increment(review_id,new_task_id)
+        with self.store.launch_lock(),self.store.transaction() as db:
+            r=get(db,review_id,'review')
+            if any(x['new_task_id']==new_task_id for x in r.get('rereviews',[])):return self.open(review_id)
+            old_id=r['versions'][-2]['task_id'];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
+            sends=rows(db,'send',review_id)
+            result=rereview.check(old,new,sends,observed)
+            r.setdefault('rereviews',[]).append(dict(old_task_id=old_id,new_task_id=new_task_id,**result))
+            event(r,'incremental_rereview','Sent comment anchors checked against the increment; outdated comments are not re-posted at a new location.',new_task_id=new_task_id)
+            put(db,r)
         return self.open(review_id)
 
     def compare_linked(self,review_id,old_task_id,new_task_id):

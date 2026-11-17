@@ -3,6 +3,7 @@
 Mock commits its own side effects before returning, enabling ambiguous-result
 faults independently of the caller's intent journal. No real repo is configured.
 """
+import copy
 from ..contract import digest,fields,text
 from .store import get,put,record
 from . import demo,github_contract
@@ -13,7 +14,16 @@ TARGET=dict(repository='mea-owned/phase4-demo',number=1)
 
 class MockGitHub:
     mode='MOCK_GITHUB_NOT_LIVE'
+    published='MOCK_PUBLISHED';reconciled='MOCK_PUBLISHED_RECONCILED';confirmed='CONFIRMED_MOCK_ONLY';send_mode='MOCK'
     def __init__(self,store):self.store=store
+
+    @staticmethod
+    def identity_of(remote):
+        return {k:copy.deepcopy(remote[k]) for k in ['identity','head','base','state','can_comment','can_read','principal','generation','complete_listing']}|dict(comments_sha256=digest(remote['comments']))
+
+    @staticmethod
+    def comment_url(target,identifier):
+        return f'https://mock-github.invalid/{target["repository"]}/pull/{target["number"]}#discussion_r{identifier}'
 
     def provision(self,task):
         if not demo.registered(task) or task['pr']['repository']!=TARGET['repository'] or task['pr']['number']!=1:raise ValueError('MOCK_TARGET_NOT_ALLOWLISTED')

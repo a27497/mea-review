@@ -412,25 +412,30 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
     return (picks + leftovers)[:limit * 2]
 
 
-def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search_pause=0):
+def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search_pause=0, since=None):
     """Return (report, snapshot). snapshot is None when status is FAILED.
+
+    With since (an earlier PR head), the base side is that commit instead of the merge base, so
+    the snapshot holds only the increment since then. since must be an ancestor of the head.
 
     Responses are shape-checked before use. If a response still breaks an assumption,
     the capture fails as TRANSPORT with every request made so far kept in the report.
     """
     owner, repo, number, pin = parse_ref(reference)
+    if since is not None and (not isinstance(since, str) or not re.fullmatch(r'[0-9a-f]{40}', since)):
+        raise ValueError('SINCE_SHA')
     c = Capture(fetcher, owner, repo)
     try:
-        return _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause)
+        return _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause, since)
     except (KeyError, TypeError, AttributeError, IndexError, UnicodeError) as exc:
         gap = c.gap(TRANSPORT, 'UNEXPECTED_RESPONSE_STRUCTURE', request=type(exc).__name__)
         return dict(schema=SCHEMA, reference=reference, repository=f'{owner}/{repo}', number=number, read_only=True,
                     status='FAILED', failure=gap, gaps=c.gaps, requests=c.requests), None
 
 
-def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause):
+def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause, since=None):
     report = dict(schema=SCHEMA, reference=reference, repository=f'{owner}/{repo}', number=number,
-                  read_only=True, status=None, failure=None, gaps=c.gaps, requests=c.requests)
+                  read_only=True, status=None, failure=None, gaps=c.gaps, requests=c.requests, since=since)
 
     def failed(gap):
         report.update(status='FAILED', failure=gap)
@@ -464,7 +469,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
                 return failed(c.gap(TRUNCATED, 'PULL_COMMITS_LIST_LIMIT', listed=listed_commits, limit=COMMIT_LIST_LIMIT))
             return failed(c.gap(MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
     target_base = pr['base']['sha']
-    response, compare = c.json(f'{c.base}/compare/{target_base}...{head}', what='compare')
+    response, compare = c.json(f'{c.base}/compare/{since or target_base}...{head}', what='compare')
     if response is None:
         return failed(c.gaps[-1])
     if compare is None:
@@ -472,6 +477,9 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     merge_base = compare['merge_base_commit']['sha']
     if merge_base == head:
         return failed(c.gap(MISSING, 'HEAD_EQUALS_MERGE_BASE'))
+    if since and merge_base != since:
+        # Force push or rebase: the earlier head is not an ancestor, so no increment exists.
+        return failed(c.gap(MISSING, 'SINCE_NOT_ANCESTOR_OF_HEAD'))
     listed = compare['files']  # Shape-checked list; [] is an explicit empty change listing.
     reported = len(listed)
     complete = True
@@ -601,7 +609,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     # reported_changed_files counts every collected file (changed + context) plus changed
     # files left out, so complete_listing is true only when no changed file is missing.
     scope_count = len(files) if complete else max(reported, included + 1) + len(context)
-    identifier = re.sub('[^a-zA-Z0-9_-]', '-', f'gh-{owner}-{repo}-{number}-{head[:12]}')[:80]
+    identifier = re.sub('[^a-zA-Z0-9_-]', '-', f'gh-{owner}-{repo}-{number}-{head[:12]}' + (f'-since-{since[:12]}' if since else ''))[:80]
     snapshot = dict(
         schema='mea-snapshot-v1', id=identifier,
         pr=dict(url=f'https://github.com/{owner}/{repo}/pull/{number}', repository=f'{owner}/{repo}', number=number, title=title, body=body),
@@ -643,8 +651,9 @@ def main(argv=None):
     parser.add_argument('reference', help='owner/repo#number or owner/repo#number@head-sha')
     parser.add_argument('--out-dir', type=Path, required=True)
     parser.add_argument('--context-files', type=int, default=CONTEXT_FILES)
+    parser.add_argument('--since', help='earlier PR head SHA; capture only the increment since that commit')
     args = parser.parse_args(argv)
-    report, snapshot = capture(args.reference, RestFetcher(token()), context_limit=args.context_files, search_pause=7)
+    report, snapshot = capture(args.reference, RestFetcher(token()), context_limit=args.context_files, search_pause=7, since=args.since)
     code = 0 if snapshot is not None else 3
     report['exit_status'] = code
     args.out_dir.mkdir(parents=True, exist_ok=True)

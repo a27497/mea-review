@@ -42,10 +42,45 @@ DESCRIPTIONS = {
 }
 
 
-def definitions():
+# Opt-in cross-file tool profile. Tasks that do not name it keep the exact v3 schema.
+CROSS_FILE = 'cross-file-tools-v1'
+CROSS_FILE_VERSION = 'mea-deepseek-native-tools-v4-cross-file'
+CROSS_FILE_PARAMETERS = {name: obj(dict(**args, summary=SUMMARY)) for name, args in SOURCE_ARGS.items()}
+CROSS_FILE_PARAMETERS['related_files'] = obj(dict(path=string(256), revision=REVISION, summary=SUMMARY))
+CROSS_FILE_PARAMETERS[FINISH] = PARAMETERS[FINISH]
+CROSS_FILE_DESCRIPTIONS = dict(
+    DESCRIPTIONS,
+    find_symbol='Find collected definitions: Python by AST, JavaScript/TypeScript by lexical declaration patterns. Uncollected/dynamic behavior UNKNOWN.',
+    references='Find bounded occurrences: Python syntactic names, JavaScript/TypeScript lexical identifier matches (may include comments/strings). Not a complete call graph.',
+    read_test=f'Read an inclusive frozen test source range (Python test_*.py/*_test.py, JS/TS *.test.*, *.spec.*, __tests__/) within {TOOL_LIMITS["result_bytes"]} serialized bytes. Never run tests.',
+    related_files='List import edges between collected files at one revision: modules the path imports and collected files that import it. Each edge cites the import line. Bare package and dynamic imports stay UNKNOWN.',
+)
+PROFILES = {None: (VERSION, PARAMETERS, DESCRIPTIONS), CROSS_FILE: (CROSS_FILE_VERSION, CROSS_FILE_PARAMETERS, CROSS_FILE_DESCRIPTIONS)}
+
+
+def profile(name=None):
+    if name not in PROFILES:
+        raise ValueError('TOOL_PROFILE')
+    return PROFILES[name]
+
+
+def version(name=None):
+    return profile(name)[0]
+
+
+def parameters(name=None):
+    return profile(name)[1]
+
+
+def definitions(name=None):
     # Normal official endpoint, no Beta strict-mode dependence. Local validation
     # remains mandatory even when a Provider uses these schemas successfully.
-    return [dict(type='function', function=dict(name=n, description=DESCRIPTIONS[n], parameters=copy.deepcopy(p))) for n, p in PARAMETERS.items()]
+    _, params, descriptions = profile(name)
+    return [dict(type='function', function=dict(name=n, description=descriptions[n], parameters=copy.deepcopy(p))) for n, p in params.items()]
+
+
+def schema_sha256(name=None):
+    return digest(definitions(name))
 
 
 SCHEMA_SHA256 = digest(definitions())
@@ -83,14 +118,15 @@ class Invalid(ValueError):
         self.diagnostic=dict(stage=stage,code=code,path=path)
 
 
-def parse_message(message,used_ids=()):
+def parse_message(message,used_ids=(),parameters=None):
     """Single-call accessor for tests/callers that explicitly expect one call."""
-    batch=parse_batch(message,used_ids)
+    batch=parse_batch(message,used_ids,parameters)
     if len(batch)!=1:raise ValueError('NATIVE_SINGLE_CALL_REQUIRED')
     return batch[0]
 
 
-def parse_call(c,used_ids=()):
+def parse_call(c,used_ids=(),parameters=None):
+    params = PARAMETERS if parameters is None else parameters
     fields(c, 'id type function')
     if not isinstance(c['id'], str) or not CALL_ID.fullmatch(c['id']):
         raise ValueError('NATIVE_CALL_ID')
@@ -100,13 +136,13 @@ def parse_call(c,used_ids=()):
         raise ValueError('NATIVE_FUNCTION_REQUIRED')
     f = c['function']
     fields(f, 'name arguments')
-    if not isinstance(f['name'], str) or f['name'] not in PARAMETERS:
+    if not isinstance(f['name'], str) or f['name'] not in params:
         raise ValueError('NATIVE_FUNCTION_NOT_ALLOWED')
     if not isinstance(f['arguments'], str) or len(f['arguments'].encode()) > 20000:
         raise ValueError('NATIVE_ARGUMENT_BYTES')
     try:args = decode(f['arguments'].encode())
     except ValueError as exc:raise Invalid(str(exc),'$.arguments') from None
-    validate(args, PARAMETERS[f['name']])
+    validate(args, params[f['name']])
     if f['name'] == FINISH:
         d = dict(kind='finish', **args)
     else:
@@ -117,7 +153,7 @@ def parse_call(c,used_ids=()):
     return d, copy.deepcopy(c)
 
 
-def parse_batch(message,used_ids=()):
+def parse_batch(message,used_ids=(),parameters=None):
     fields(message,'role content tool_calls')
     if message['role']!='assistant' or (message['content'] is not None and not isinstance(message['content'],str)):
         raise Invalid('NATIVE_ASSISTANT_FIELDS','$.message')
@@ -127,7 +163,7 @@ def parse_batch(message,used_ids=()):
         raise Invalid('NATIVE_CALL_BATCH_BOUND','$.message.tool_calls')
     seen=set(used_ids);actions=set();result=[]
     for i,c in enumerate(calls):
-        try:d,c=parse_call(c,seen)
+        try:d,c=parse_call(c,seen,parameters)
         except ValueError as exc:
             stage='TOOL_NOT_ALLOWED' if str(exc)=='NATIVE_FUNCTION_NOT_ALLOWED' else 'MODEL_ARGUMENTS'
             suffix=getattr(exc,'diagnostic',{}).get('path','').removeprefix('$.arguments')
@@ -142,7 +178,7 @@ def parse_batch(message,used_ids=()):
     return result
 
 
-def validate_messages(messages, prompt):
+def validate_messages(messages, prompt, parameters=None):
     if not isinstance(messages, list) or len(messages) < 2:
         raise ValueError('NATIVE_MESSAGES')
     if messages[0] != dict(role='system', content=prompt):
@@ -152,7 +188,7 @@ def validate_messages(messages, prompt):
         raise ValueError('NATIVE_USER_MESSAGE')
     used=set();index=2
     while index<len(messages):
-        batch=parse_batch(messages[index],used)
+        batch=parse_batch(messages[index],used,parameters)
         if any(d['kind']!='tool' for d,c in batch):raise ValueError('NATIVE_FINISH_CANNOT_CONTINUE')
         expected=[c['id'] for d,c in batch];used.update(expected)
         index+=1

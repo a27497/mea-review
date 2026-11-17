@@ -40,6 +40,7 @@ mea/__init__.py	mea/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-ex
 mea/__main__.py	mea/__main__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Offline entry point and task directory option
 mea/contract.py	mea/contract.py	344acf0c8bd59157e81d03aa771547e2b330986e	UTF-8 import and shared Git blob digest
 mea/export.py	mea/export.py	344acf0c8bd59157e81d03aa771547e2b330986e	Static report export
+mea/github_input.py	New	M2	Read-only GitHub PR capture into mea-snapshot-v1 with MISSING, TRUNCATED and TRANSPORT gaps
 mea/human_review/__init__.py	mea/human_review/__init__.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Mock module
 mea/human_review/api.py	mea/human_review/api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Mock review API with bounded local requests
 mea/human_review/compare.py	mea/human_review/compare.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Conservative comparison on batch 1 frozen-read protocol
@@ -53,7 +54,9 @@ mea/investigation/__init__.py	mea/investigation/__init__.py	344acf0c8bd59157e81d
 mea/investigation/authorization.py	mea/investigation/authorization.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Replace historical authorization with simulation-only scoped admission
 mea/investigation/context_budget.py	mea/investigation/context_budget.py	2b034be94abe0bdc5abec10da2b7131f11a2f019	Opt-in calibrated reservation with the existing default
 mea/investigation/decision.py	mea/investigation/decision.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
+mea/investigation/deepseek.py	New	M2	Private DeepSeek key reader and single-POST sender for the controlled live lane
 mea/investigation/envelope.py	mea/investigation/envelope.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Byte-exact response structure and redaction
+mea/investigation/live_run.py	New	M2	Attended live run of one scoped snapshot through the existing Coordinator and Broker
 mea/investigation/mock_provider.py	mea/investigation/mock_provider.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Deterministic Mock transport with cancellation and deadline handling
 mea/investigation/native.py	mea/investigation/native.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Native tool-call contract bound to byte-page tools
 mea/investigation/provider_view.py	mea/investigation/tools.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Port whole-line byte pages without changing legacy tool results
@@ -74,8 +77,12 @@ package-lock.json	package-lock.json	344acf0c8bd59157e81d03aa771547e2b330986e	Pin
 package.json	New	Batch 1	Expose separate Review v3 browser verification
 scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
+tests/github_fixtures.py	New	M2	Self-owned in-memory GitHub REST fixture
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
 tests/test_controlled_investigation.py	tests/test_real_investigation.py	New	Existing simulation tests plus request-profile regressions
+tests/test_cross_file_tools.py	New	M2	Cross-file tool, paging and citation validation regressions
+tests/test_deepseek_transport.py	New	M2	Live lane, transport and credential tests with a fake HTTPS connection
+tests/test_github_input.py	New	M2	GitHub capture tests over the offline fixture
 tests/test_holdout_adjudication.py	tests/test_holdout_adjudication.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic adjudication, freeze and reveal test adapted to the private packet boundary
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler

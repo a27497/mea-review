@@ -80,11 +80,78 @@ interrupted SENDING request is UNCERTAIN. Both retain their reservation.
 After restart the worker may process a saved response or deterministic
 feedback. It cannot reactivate a previous task or resend an uncertain request.
 
-All costs here are simulated. Live admission has no registered scope,
-production ledger or credential reader in this candidate. The wire adapter
-has no executable entry point and the test suite supplies a fake connection.
-Real activation requires a separately verified approval and the authoritative
-production spending ledger.
+All costs in this rehearsal are simulated. The workbench HTTP server never
+admits a real provider task. Real runs use the separate command-line lane
+below.
+
+## Capture a GitHub pull request (read-only)
+
+~~~sh
+python3 -B -m mea.github_input owner/repo#123 --out-dir PRIVATE_DIR
+python3 -B -m mea.github_input owner/repo#123@HEAD_SHA --out-dir PRIVATE_DIR
+~~~
+
+The reader makes GET requests only, with the token from GH_TOKEN, GITHUB_TOKEN
+or `gh auth token`. It pins the head SHA (the current head or a named commit of
+the PR) and takes the merge base from the compare API. Each changed file gets
+its full text at both sides, checked against the Git blob SHA. Up to eight
+unchanged context files are added with status `context`. They are chosen from
+test file names, GitHub code search for changed definitions and imports of the
+changed files, and are always read at the pinned head.
+
+`capture.json` lists every request and keeps three gap kinds apart. MISSING
+means the evidence is absent or unusable, for example 404, binary or not UTF-8.
+TRUNCATED means a bound cut existing evidence, such as an omitted provider
+patch or an oversized source. TRANSPORT means no definitive answer, for example
+a network error, 401/403/429, 5xx, or a 200 response whose JSON or required
+fields are unusable. Required provider fields are never filled with defaults:
+an absent `files`, `tree` or search `items` list is such a TRANSPORT gap, while
+an explicitly empty list means no results. A failed capture still writes `capture.json` with its
+requests and `exit_status`, and the command exits 3.
+
+`snapshot.json` is a mea-snapshot-v1 input. `omitted_sources` lists only gaps
+tied to a file path and side. `scope.capture` carries the typed capture
+status: COMPLETE or INCOMPLETE, the context selection result, per-kind gap
+counts and every gap, including those without a path such as a failed tree or
+code search request. Context selection is COLLECTED, PARTIAL (some tree,
+search or context read failed), FAILED (no usable tree),
+SKIPPED_INCOMPLETE_CHANGE_LISTING or NOT_REQUESTED. Tool results, the first
+model request, the static report and Review v3 repeat an incomplete capture
+status. Snapshots without `scope.capture` remain valid. Real PR snapshots
+belong in private storage, not in this repository.
+
+## Run the controlled real DeepSeek lane
+
+~~~sh
+python3 -B -m mea.investigation.live_run --scope SCOPE.json \
+  --snapshot PRIVATE_DIR/snapshot.json --store PRIVATE_STORE \
+  --out PRIVATE_DIR/run.json --confirm-real-provider
+~~~
+
+This is a billed call to the DeepSeek API at api.deepseek.com, model
+`deepseek-flash`, with thinking disabled. The run reuses the native tool-call
+protocol, Coordinator and Broker from the Mock rehearsal. The request intent,
+SENDING marker, reservation and uncertainty rules stay the same, and each
+request makes one POST with no retry. The key comes from
+~/.config/mea/deepseek.env (DEEPSEEK_API_KEY, owner-only file). Receipts
+redact it.
+
+The scope file names the grant id, the exact snapshot input digests, task and
+request caps, task budget, tool profile, first-turn profile, approval text and
+a USD budget. The live ledger prices reported usage at the official list price
+(https://api-docs.deepseek.com/quick_start/pricing, read 2026-11-17) and
+refuses a request whose peak-rate reservation exceeds USD 10. It is an
+estimate, not reconciled with the provider invoice.
+
+The `cross-file-tools-v1` profile adds `related_files` (import edges between
+collected files, each citing its import line), JavaScript/TypeScript lexical
+`find_symbol` and `references`, JS/TS test reads and 80-line source pages
+bounded by the bytes the model sees. Its last request offers only
+`finish_investigation`. Each response is parsed against the tools its own
+request declared. A response that calls an undeclared tool executes nothing and
+stops the task as TOOL_NOT_ALLOWED. Candidates still validate only against cited lines that
+exist in the selected snapshot and were returned to the model. Tasks without
+the profile keep the previous tool schema and pages.
 
 ## Verify
 
@@ -148,7 +215,9 @@ and Mock rehearsal adapt checkpoint 3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4.
 All examples are self-owned synthetic fixtures. See the
 [source manifest](SOURCE-MANIFEST.tsv) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
-Static findings and Mock candidates require human judgment. Source hashes
-bind evidence to the supplied snapshot. Source authenticity, target execution,
-live capture, real AI and GitHub writeback are outside this local candidate.
+Static findings, Mock candidates and real-model candidates require human
+judgment. Source hashes bind evidence to the supplied snapshot. Read-only
+GitHub capture and the command-line real DeepSeek lane are included. Source
+authenticity, target execution, real AI in the workbench and GitHub writeback
+are outside this candidate.
 The project is licensed under the [MIT License](LICENSE). Publication approval is pending.

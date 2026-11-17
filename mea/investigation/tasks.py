@@ -126,7 +126,7 @@ class Store:
             task = self.get(identifier)
             if task['status'] not in TERMINAL:
                 task.update(status='CANCELLED', reason='USER_CANCELLED')
-                if task['mode'] == real.MODE:
+                if task['mode'] in real.PROVIDER_MODES:
                     real.interrupt_request(db, task)
                     task['activation_revoked'] = True
                     if any(r['state'] == 'UNCERTAIN' for r in task['requests']):

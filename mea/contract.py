@@ -62,6 +62,39 @@ def path(value):
     return value
 
 
+GAP_KINDS = ('MISSING', 'TRUNCATED', 'TRANSPORT')
+CONTEXT_SELECTION = {'COLLECTED', 'PARTIAL', 'FAILED', 'SKIPPED_INCOMPLETE_CHANGE_LISTING', 'NOT_REQUESTED'}
+
+
+def capture_status(value):
+    """Optional typed capture status: overall state, context selection and every gap, with or without a path."""
+    fields(value, 'status context_selection gap_counts gaps')
+    if value['context_selection'] not in CONTEXT_SELECTION:
+        raise ValueError('CAPTURE_CONTEXT_SELECTION')
+    counts = value['gap_counts']
+    fields(counts, ' '.join(GAP_KINDS))
+    if any(type(counts[k]) is not int or counts[k] < 0 for k in GAP_KINDS):
+        raise ValueError('CAPTURE_GAP_COUNTS')
+    total = sum(counts.values())
+    if value['status'] != ('INCOMPLETE' if total else 'COMPLETE'):
+        raise ValueError('CAPTURE_STATUS')
+    gaps = value['gaps']
+    if not isinstance(gaps, list) or len(gaps) > min(48, total) or (total and not gaps):
+        raise ValueError('CAPTURE_GAP_BOUND')
+    for row in gaps:
+        fields(row, 'kind code request path side')
+        if row['kind'] not in GAP_KINDS or row['side'] not in (None, 'base', 'head'):
+            raise ValueError('CAPTURE_GAP')
+        text(row['code'], 160)
+        if row['request'] is not None:
+            text(row['request'], 40)
+        if row['path'] is not None:
+            path(row['path'])
+    if value['context_selection'] == 'COLLECTED' and any(row['path'] is None and row['request'] in ('tree', 'search') for row in gaps):
+        raise ValueError('CAPTURE_CONTEXT_SELECTION')
+    return value
+
+
 def validate(data):
     fields(data, 'schema id pr revisions provenance scope files')
     if data['schema'] != 'mea-snapshot-v1' or len(canonical(data)) > MAX_BYTES:
@@ -96,8 +129,12 @@ def validate(data):
         raise ValueError('CAPTURE_DIGEST')
     if provenance['kind'] == 'FROZEN_PENDING_REVIEW' and (not provenance['pending_review_version'] or provenance['state_at_capture'] != 'open' or provenance['merged_at_capture']):
         raise ValueError('PENDING_REVIEW_VERSION_REQUIRED')
-    fields(data['scope'], 'reported_changed_files complete_listing omitted_sources')
     scope = data['scope']
+    if isinstance(scope, dict) and 'capture' in scope:
+        fields(scope, 'reported_changed_files complete_listing omitted_sources capture')
+        capture_status(scope['capture'])
+    else:
+        fields(scope, 'reported_changed_files complete_listing omitted_sources')
     if type(scope['reported_changed_files']) is not int or scope['reported_changed_files'] < 1 or type(scope['complete_listing']) is not bool:
         raise ValueError('FILE_SCOPE')
     if not isinstance(scope['omitted_sources'], list) or len(scope['omitted_sources']) > 48:
@@ -118,8 +155,11 @@ def validate(data):
         fields(file, 'path base_path status patch sides')
         name = path(file['path'])
         path(file['base_path'])
-        if name in seen or file['status'] not in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'}:
+        if name in seen or file['status'] not in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed', 'context'}:
             raise ValueError('FILE_IDENTITY')
+        # Unchanged context collected beside the change carries no diff.
+        if file['status'] == 'context' and (file['patch'] is not None or file['base_path'] != name):
+            raise ValueError('CONTEXT_FILE_IDENTITY')
         seen.add(name)
         if file['patch'] is not None:
             text(file['patch'], 60000)

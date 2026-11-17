@@ -187,7 +187,7 @@ def project(initial,batches,body_base,limits,available_tokens,output_tokens,esti
     raise ValueError('CONTEXT_PROJECTION_BOUND')
 
 
-def validate_projection(body):
+def validate_projection(body,parameters=None):
     """Check local row identities and complete call/reply associations on the wire."""
     from . import native
     ctx=json.loads(body['messages'][1]['content']);rows={};identifiers=set()
@@ -203,12 +203,12 @@ def validate_projection(body):
     replies=[];used=[]
     for folded in ctx['folded_history']:
         calls=folded['calls'];ids=[c['id'] for c in calls]
-        native.parse_batch(dict(role='assistant',content=None,tool_calls=calls),used)
+        native.parse_batch(dict(role='assistant',content=None,tool_calls=calls),used,parameters)
         if ids!=folded['tool_call_ids'] or ids!=[f['tool_call_id'] for f in folded['feedback']]:raise ValueError('CONTEXT_FOLDED_CALL_MISMATCH')
         used.extend(ids);replies.extend(folded['feedback'])
     for m in body['messages'][2:]:
         if m['role']=='assistant':
-            native.parse_batch(m,used);used.extend(c['id'] for c in m['tool_calls'])
+            native.parse_batch(m,used,parameters);used.extend(c['id'] for c in m['tool_calls'])
         else:replies.append(json.loads(m['content']))
     for reply in replies:
         if reply['format']!=VERSION:raise ValueError('CONTEXT_FEEDBACK_VERSION')

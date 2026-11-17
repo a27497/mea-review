@@ -205,20 +205,66 @@ def read_byte_basis(task):
     return profile.get('read_bytes') if profile else None
 
 
+# Opt-in cross-file tool profile. A task selects it through identity['tool_profile'].
+CROSS_FILE_NOTE='''
+This task uses the cross-file tool profile. The PR may change Python, JavaScript or TypeScript files.
+Collected files include changed files and unchanged context files (changed=false) chosen by the host from imports,
+name matches and tests. related_files lists import edges between collected files with cited import lines.
+find_symbol and references also cover JavaScript/TypeScript by lexical matching, which can include comments and strings.
+Context files have no diff: anchor every candidate on a changed line, and cite context lines as supporting evidence.
+When the host sets finish_only, only finish_investigation is available. Report supported candidates with exact
+visible evidence IDs, or give the honest reason to abstain.
+Source and test reads return at most 80 whole lines per page. PAGE_LIMIT and BYTE_LIMIT carry a continuation;
+follow it only when the next lines are needed for a specific claim.
+A response holds at most 1600 output tokens. Keep each summary, trigger and impact under 600 characters.
+'''
+
+
+def tool_profile(task):
+    name=task.get('identity',{}).get('tool_profile')
+    if name is None:return None
+    if name!=native.CROSS_FILE:raise ValueError('TOOL_PROFILE')
+    return name
+
+
+def tool_parameters(task):
+    return native.parameters(tool_profile(task))
+
+
+def request_parameters(task,request):
+    """Response whitelist of one request: the task profile limited to the tools that request declared.
+
+    A finish-only request therefore accepts only finish_investigation. Replayed history uses
+    the whitelist of its own original request.
+    """
+    params=tool_parameters(task)
+    body=request.get('request_body') if isinstance(request,dict) else None
+    tools=body.get('tools') if isinstance(body,dict) else None
+    if not isinstance(tools,list):return params
+    declared={t['function']['name'] for t in tools if isinstance(t,dict) and isinstance(t.get('function'),dict)}
+    return {name:schema for name,schema in params.items() if name in declared}
+
+
+def view_class(task):
+    from .provider_view import View, CrossFileView
+    return CrossFileView if tool_profile(task) else View
+
+
 def task_prompt(task):
     if task.get('arm') == 'agent_bounded':
         base=C1_BOUNDED_PROMPT
     else:base=C1_OPTIMIZED_PROMPT if task.get('arm') == 'agent_optimized' else PROMPT
     profile=first_turn(task)
     prompt=base+PR_TEXT_NOTE if profile and profile['pull_request'] else base
+    if tool_profile(task):prompt+=CROSS_FILE_NOTE
     reads=agent_budget(task)
     if not reads:return prompt
     note=READ_PAGE_VISIBLE_NOTE if reads.get('read_bytes') else READ_PAGE_NOTE
     return prompt+note.format(lines=reads['read_lines'])
 
 
-def terminal_tools():
-    return [tool for tool in native.definitions() if tool['function']['name']==native.FINISH]
+def terminal_tools(profile=None):
+    return [tool for tool in native.definitions(profile) if tool['function']['name']==native.FINISH]
 
 
 def budget(value=None):
@@ -248,22 +294,22 @@ def compact(result):
     return r
 
 
-def decision(value, used_ids=()):
+def decision(value, used_ids=(), parameters=None):
     if not isinstance(value,dict) or value.get('protocol_error'):
         raise ValueError('NATIVE_RECEIPT_REQUIRED')
     if value.get('http_status')!=200 or value.get('model')!=MODEL or value.get('finish_reason')!='tool_calls':
         raise ValueError('NATIVE_RESPONSE_STATE')
-    return native.parse_message(value.get('message'),used_ids)
+    return native.parse_message(value.get('message'),used_ids,parameters)
 
 
 def tool_message(call_id,result):
     return dict(role='tool',tool_call_id=call_id,content=canonical(compact(result)).decode())
 
 
-def decisions(value,used_ids=()):
+def decisions(value,used_ids=(),parameters=None):
     if not isinstance(value,dict) or value.get('protocol_error'):raise ValueError('NATIVE_RECEIPT_REQUIRED')
     if value.get('http_status')!=200 or value.get('model')!=MODEL or value.get('finish_reason')!='tool_calls':raise ValueError('NATIVE_RESPONSE_STATE')
-    return native.parse_batch(value.get('message'),used_ids)
+    return native.parse_batch(value.get('message'),used_ids,parameters)
 
 
 def prior_ids(task,index):
@@ -271,7 +317,7 @@ def prior_ids(task,index):
 
 
 def bound_calls(task,index):
-    r=task['requests'][index];batch=decisions(r['receipt'],prior_ids(task,index))
+    r=task['requests'][index];batch=decisions(r['receipt'],prior_ids(task,index),request_parameters(task,r))
     if r.get('native_calls')!=[c for d,c in batch] or not r.get('decision_applied'):
         raise ValueError('NATIVE_JOURNAL_CALL_MISMATCH')
     if len(batch)==1 and r.get('native_call')!=batch[0][1]:raise ValueError('NATIVE_JOURNAL_CALL_MISMATCH')
@@ -286,7 +332,7 @@ def bound_call(task,index):
 
 def prepare_request(task):
     view=task['view'];diffs=[];used=0
-    profile=first_turn(task)
+    profile=first_turn(task);tools_profile=tool_profile(task)
     window_bytes=profile['initial_diff_bytes'] if profile else INITIAL_DIFF_BYTES
     for f in view['files']:
         if not f['patch']:continue
@@ -295,12 +341,16 @@ def prepare_request(task):
             diffs.append(dict(path=f['path'],base_path=f['base_path'],diff=f['patch']));used+=len(raw)
         else:
             diffs.append(dict(path=f['path'],omission='INITIAL_DIFF_BYTE_BOUND; use bounded frozen tools',content_sha256=digest(raw)))
-    context=dict(protocol=native.VERSION,policy=POLICY,view_sha256=task['identity']['view_sha256'],revisions=view['revisions'],objective=task['goal'],
+    context=dict(protocol=native.version(tools_profile),policy=POLICY,view_sha256=task['identity']['view_sha256'],revisions=view['revisions'],objective=task['goal'],
         files=[dict(path=f['path'],base_path=f['base_path'],available_sides=list(f['sides']),changed=bool(f['patch'])) for f in view['files']],
         initial_diffs=diffs,remaining=dict(requests=task['budget']['rounds']-task['usage']['rounds'],tools=task['budget']['tools']-task['usage']['tools']),
         coverage='Only supplied collected files; uncollected source, runtime behavior and dynamic uses UNKNOWN')
     if profile and profile['pull_request']:
         context['pull_request']=pull_request_text(view['pr'],profile['description_bytes'])
+    capture=view['coverage'].get('capture') if isinstance(view.get('coverage'),dict) else None
+    if capture is not None:
+        # Typed capture status from the snapshot, so a failed tree or search is not read as "no context".
+        context['capture']=copy.deepcopy(capture)
     batches=[]
     # Only committed, verified assistant/tool pairs enter history. Never insert
     # fabricated calls or omit a reply while leaving its assistant call behind.
@@ -336,21 +386,27 @@ def prepare_request(task):
         batches.append((copy.deepcopy(r['receipt']['message']),replies))
     if len(consumed)!=len(task['results']):raise ValueError('NATIVE_HISTORY_NOT_COMMITTED')
     context['remaining']['tokens']=task['budget']['tokens']-task['usage']['tokens_accounted']
-    tools=native.definitions()
+    tools=native.definitions(tools_profile)
     if task.get('arm')=='agent_bounded':
         context['finish_only']=(context['remaining']['requests']<=1 or context['remaining']['tools']<=1
                                 or context['remaining']['tokens']<=40000
                                 or task['budget']['output_bytes']-task['usage'].get('output_bytes',0)<=40000)
         if context['finish_only']:tools=terminal_tools()
+    elif tools_profile:
+        # The cross-file profile reserves its last request for a conclusion instead of a budget stop.
+        context['finish_only']=(context['remaining']['requests']<=1 or context['remaining']['tools']<=0
+                                or task['budget']['output_bytes']-task['usage'].get('output_bytes',0)<=60000)
+        if context['finish_only']:tools=terminal_tools(tools_profile)
+    tool_choice=FINISH_CHOICE if tools_profile and context.get('finish_only') else 'required'
     cfg=window.config(task['identity'].get('context_policy',{}).get('limits'))
     cfg['serialized_bytes']=min(cfg['serialized_bytes'],INPUT_BYTES)
     body,reservation,manifest=window.project(context,batches,
         dict(model=MODEL,thinking=dict(type='disabled'),temperature=0,max_tokens=OUTPUT_TOKENS,stream=False,
-             tools=tools,tool_choice='required',_prompt=task_prompt(task)),cfg,
+             tools=tools,tool_choice=tool_choice,_prompt=task_prompt(task)),cfg,
         context['remaining']['tokens'],OUTPUT_TOKENS,window.estimator_of(task))
     manifest['journal_requests']=[dict(id=r['id'],request_body_sha256=r['request_body_sha256'],
         result_sha256s=r['result_sha256s'],tool_message_sha256s=[digest(m) for m in r['tool_messages']]) for r in task['requests']]
-    validate_request(body,prompt=task_prompt(task),estimator=window.estimator_of(task),profile=profile)
+    validate_request(body,prompt=task_prompt(task),estimator=window.estimator_of(task),profile=profile,tool_profile=tools_profile)
     return body,reservation,manifest
 
 
@@ -359,12 +415,23 @@ def request(task):
     return body,reservation
 
 
-def validate_request(body,*,prompt=PROMPT,estimator=window.ESTIMATOR,profile=None):
+# Named choice for the cross-file profile's finish-only request (non-thinking mode only).
+FINISH_CHOICE=dict(type='function',function=dict(name=native.FINISH))
+
+
+def validate_task_request(body,task):
+    """validate_request with the prompt and profiles the task itself selected."""
+    validate_request(body,prompt=task_prompt(task),estimator=window.estimator_of(task),profile=first_turn(task),tool_profile=tool_profile(task))
+
+
+def validate_request(body,*,prompt=PROMPT,estimator=window.ESTIMATOR,profile=None,tool_profile=None):
     if (not isinstance(body,dict) or set(body)!={'model','thinking','temperature','max_tokens','stream','tools','tool_choice','messages'} or
         body['model']!=MODEL or body['max_tokens']!=OUTPUT_TOKENS or body['stream'] is not False or body['temperature']!=0 or
-        body['thinking']!={'type':'disabled'} or body['tool_choice']!='required'):
+        body['thinking']!={'type':'disabled'} or body['tool_choice'] not in ('required',FINISH_CHOICE)
+        or (body['tool_choice']==FINISH_CHOICE and tool_profile is None)):
         raise ValueError('REQUEST_BOUND')
-    native.validate_messages(body['messages'],prompt)
+    parameters=native.parameters(tool_profile)
+    native.validate_messages(body['messages'],prompt,parameters)
     import json
     ctx=json.loads(body['messages'][1]['content'])
     # PR text reaches the model only under a profile that asks for it, and only in its bounded shape.
@@ -377,16 +444,20 @@ def validate_request(body,*,prompt=PROMPT,estimator=window.ESTIMATOR,profile=Non
                 or not isinstance(text['title'],str) or not isinstance(text['description'],str) or type(text['description_truncated']) is not bool
                 or len(text['title'].encode())>500 or len(text['description'].encode())>profile['description_bytes']):
             raise ValueError('REQUEST_PULL_REQUEST_FIELD')
-    expected_tools=native.definitions()
+    expected_tools=native.definitions(tool_profile)
     if prompt==C1_BOUNDED_PROMPT:
         if type(ctx.get('finish_only')) is not bool:raise ValueError('C1_FINISH_MODE_REQUIRED')
         if ctx['finish_only']:expected_tools=terminal_tools()
+    elif tool_profile is not None:
+        if type(ctx.get('finish_only')) is not bool:raise ValueError('FINISH_MODE_REQUIRED')
+        if ctx['finish_only']:expected_tools=terminal_tools(tool_profile)
+        if (body['tool_choice']==FINISH_CHOICE)!=ctx['finish_only']:raise ValueError('REQUEST_TOOL_CHOICE')
     if body['tools']!=expected_tools:raise ValueError('REQUEST_TOOL_SCHEMA')
     policy=ctx.get('context_policy')
     if not isinstance(policy,dict) or policy!=window.identity(policy.get('limits')):raise ValueError('CONTEXT_POLICY_MISMATCH')
     cfg=policy['limits']
     if len(canonical(body))>min(INPUT_BYTES,cfg['serialized_bytes']):raise ValueError('REQUEST_INPUT_BYTE_BOUND')
-    window.validate_projection(body)
+    window.validate_projection(body,parameters)
     upper=window.estimate(body,estimator)['input_reservation']
     if upper>min(cfg['input_tokens'],window.PROFILE['context_tokens']-window.PROFILE['headroom_tokens']-OUTPUT_TOKENS):raise ValueError('MODEL_CONTEXT_BUDGET')
     if upper+OUTPUT_TOKENS>ctx['remaining']['tokens']:raise ValueError('TOKEN_RESERVATION_BUDGET')

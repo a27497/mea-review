@@ -77,6 +77,8 @@ def check(old, new, sends, observed=None, prior=()):
         c = s['remote_comment']
         p = s['payload']
         before = last.get(s['id'])
+        if p['commit_id'] == old_head:
+            before = None  # Sent against this increment's base: map the payload itself.
         if before and before['status'] == 'CURRENT' and before['new']:
             p = dict(before['new'])
         row = dict(send_id=s['id'], comment_id=c['id'], html_url=c['html_url'],

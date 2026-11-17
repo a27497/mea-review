@@ -512,6 +512,18 @@ class AnchorMappingTests(unittest.TestCase):
                     remote_comment=dict(id=1, html_url='u'))
         return rereview.check(old, new, [send])['comments'][0]
 
+    def test_payload_at_the_increment_base_overrides_an_earlier_recheck(self):
+        old = dict(view=dict(revisions=dict(head=H2), files=[]), candidates=[])
+        new = dict(view=dict(revisions=dict(base=H2, head=H3), coverage=dict(complete_listing=True),
+                             files=[dict(path='a.py', base_path='a.py', status='modified', patch='@@ -3 +3 @@\n-x\n+y\n', sides=dict(head=dict()))]),
+                   candidates=[dict(id='c1', change=dict(path='a.py', line=3, side='head', revision=H3))])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H2, path='a.py', line=3, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(comments=[dict(send_id='send-1', status='NEEDS_RECHECK', new=None, old=dict(commit_id=H1))])]
+        result = rereview.check(old, new, [send], None, prior)
+        self.assertEqual(result['comments'][0]['status'], 'OUTDATED')
+        self.assertEqual(result['candidates'][0]['status'], 'AT_OUTDATED_COMMENT_LOCATION')
+
     def test_copies_incomplete_listings_and_missing_sources_are_not_guessed(self):
         copy_entry = dict(path='b.py', base_path='a.py', status='copied', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(head=dict()))
         self.assertEqual(self.view_check([copy_entry])['status'], 'CURRENT')

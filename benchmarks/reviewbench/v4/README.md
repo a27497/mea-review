@@ -1,5 +1,7 @@
 # ReviewBench v4: M3 three-arm comparison
 
+Aggregate M3 holdout results: [RESULTS.md](RESULTS.md).
+
 v4 compares three review arms on real public pull requests and records whether
 an Agent with cross-file tools beats a single Direct LLM request. Static rules
 give a floor. v1 to v3 and their frozen inputs stay unchanged.

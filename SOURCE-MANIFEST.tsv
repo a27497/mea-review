@@ -22,6 +22,7 @@ benchmarks/reviewbench/v3/holdout_adjudicate.py	benchmarks/reviewbench/v3/holdou
 benchmarks/reviewbench/v3/holdout_reader.html	benchmarks/reviewbench/v3/holdout_reader.html	8556f980d0873ed55e2583df9a9dd6a57670371a	Self-contained offline adjudication interface
 benchmarks/reviewbench/v3/holdout_reveal.py	benchmarks/reviewbench/v3/holdout_reveal.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Reveal and reconcile decisions after the freeze
 benchmarks/reviewbench/v4/README.md	New	M3	Three-arm comparison method, blind judging and run commands
+benchmarks/reviewbench/v4/RESULTS.md	New	M3	Aggregate holdout results with PLAN and addendum digests; no per-PR data
 benchmarks/reviewbench/v4/arms.py	New	M3	Evaluation snapshot without PR text; Static, Direct and Agent arms in one candidate form
 benchmarks/reviewbench/v4/judge.py	New	M3	Blind packet, judge request and strict response, reveal and agreement sample
 benchmarks/reviewbench/v4/m3.py	New	M3	Attended operator CLI for capture, arm runs, judging and scoring

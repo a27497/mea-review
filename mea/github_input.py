@@ -43,6 +43,8 @@ PATCH_LINES = 4000
 BODY_BYTES = 16000
 RESPONSE_BYTES = 8_000_000
 PROVIDER_FILE_LIST = 300
+COMMIT_LIST_LIMIT = 250  # GitHub's ceiling for GET /pulls/{n}/commits
+COMMIT_PAGES = 3
 CONTEXT_FILES = 8
 SEARCHES = 3
 FORBIDDEN = '\v\f\x1c\x1d\x1e\x85\u2028\u2029'
@@ -156,11 +158,24 @@ class Capture:
         except (ValueError, UnicodeError, RecursionError):
             self.gap(TRANSPORT, 'MALFORMED_JSON_RESPONSE', file, side, request=what)
             return None, None
+        if not valid_unicode(data):
+            # JSON escapes such as "\ud800" decode to lone surrogates that cannot be encoded later.
+            self.gap(TRANSPORT, 'INVALID_UNICODE_IN_RESPONSE', file, side, request=what)
+            return None, None
         check = SHAPES.get(what)
         if check is not None and not check(data):
             self.gap(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', file, side, request=what)
             return None, None
         return response, data
+
+
+def valid_unicode(data):
+    """True when every string in a decoded JSON value encodes as UTF-8 (no lone surrogates)."""
+    try:
+        json.dumps(data, ensure_ascii=False).encode('utf-8')
+    except (UnicodeError, RecursionError):
+        return False
+    return True
 
 
 def _sha(value):
@@ -197,7 +212,12 @@ def _compare_file(f):
         return False
     if f['status'] in ('renamed', 'copied') and not _has(f, 'previous_filename', str):
         return False
-    return f['status'] == 'removed' or _has(f, 'sha', str)
+    if f['status'] == 'removed':
+        return f.get('sha') is None or _sha(f['sha'])
+    # GitHub documents diff-entry sha as required but nullable. The key must be present; a null
+    # value means compare supplied no blob id, so contents are read at the pinned head and checked
+    # against their own Git blob. An empty or malformed string is never accepted as a blob id.
+    return 'sha' in f and (f['sha'] is None or _sha(f['sha']))
 
 
 def _compare(d):
@@ -206,9 +226,11 @@ def _compare(d):
 
 
 def _tree_entry(e):
+    # GitHub's git-tree schema requires path, mode, type and sha; size is optional. A missing
+    # size is "size unknown" and the byte bound is enforced when the contents are read.
     if not (isinstance(e, dict) and _has(e, 'path', str) and _has(e, 'type', str)):
         return False
-    return e['type'] != 'blob' or (_has(e, 'size', int) and _has(e, 'sha', str))
+    return e['type'] != 'blob' or (_sha(e.get('sha')) and ('size' not in e or _has(e, 'size', int)))
 
 
 def _tree(d):
@@ -252,7 +274,7 @@ def decode_source(capture, data, path, side, expected_blob=None):
         capture.gap(MISSING, 'CONTENT_ENCODING_INVALID', path, side)
         return None
     blob = git_blob_sha(raw)
-    if blob != data['sha'] or (expected_blob and blob != expected_blob):
+    if blob != data['sha'] or (expected_blob is not None and blob != expected_blob):
         capture.gap(MISSING, 'BLOB_SHA_MISMATCH', path, side)
         return None
     if b'\0' in raw:
@@ -338,7 +360,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
     then other imports. Search runs on the default branch; every hit is re-resolved
     in the pinned head tree and fetched at the head SHA.
     """
-    known = {e['path']: e for e in tree}  # Blob entries only, each with a checked size and sha.
+    known = {e['path']: e for e in tree}  # Blob entries only, each with a checked sha; size may be unknown.
     changed = {f['path'] for f in files} | {f['base_path'] for f in files}
     buckets = dict(tests=[], callers=[], used_imports=[], imports=[])
     seen = set()
@@ -346,7 +368,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
     def add(bucket, path, reason):
         entry = known.get(path)
         if (path in changed or path in seen or entry is None or language(path) is None
-                or accepted(path) is None or entry['size'] > SOURCE_BYTES):
+                or accepted(path) is None or entry.get('size', 0) > SOURCE_BYTES):
             return
         seen.add(path)
         buckets[bucket].append((path, reason))
@@ -400,7 +422,7 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search
     c = Capture(fetcher, owner, repo)
     try:
         return _capture(c, reference, owner, repo, number, pin, context_limit, now, search_pause)
-    except (KeyError, TypeError, AttributeError, IndexError) as exc:
+    except (KeyError, TypeError, AttributeError, IndexError, UnicodeError) as exc:
         gap = c.gap(TRANSPORT, 'UNEXPECTED_RESPONSE_STRUCTURE', request=type(exc).__name__)
         return dict(schema=SCHEMA, reference=reference, repository=f'{owner}/{repo}', number=number, read_only=True,
                     status='FAILED', failure=gap, gaps=c.gaps, requests=c.requests), None
@@ -421,12 +443,25 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         return failed(c.gap(MISSING, f'PULL_HTTP_{response.status}'))
     head = pin or pr['head']['sha']
     if pin:
-        response, commits = c.json(f'{c.base}/pulls/{number}/commits?per_page=100', what='pull_commits')
-        if response is None:
-            return failed(c.gaps[-1])
-        if commits is None:
-            return failed(c.gap(MISSING, f'PULL_COMMITS_HTTP_{response.status}'))
-        if pin not in [x['sha'] for x in commits]:
+        found = None
+        listed_commits = 0
+        for page in range(1, COMMIT_PAGES + 1):
+            suffix = '' if page == 1 else f'&page={page}'
+            response, commits = c.json(f'{c.base}/pulls/{number}/commits?per_page=100{suffix}', what='pull_commits')
+            if response is None:
+                return failed(c.gaps[-1])
+            if commits is None:
+                return failed(c.gap(MISSING, f'PULL_COMMITS_HTTP_{response.status}'))
+            listed_commits += len(commits)
+            if pin in [x['sha'] for x in commits]:
+                found = page
+                break
+            if len(commits) < 100:
+                break
+        if found is None:
+            if listed_commits >= COMMIT_LIST_LIMIT:
+                # GitHub lists at most 250 commits for a pull; a pin beyond that cannot be verified here.
+                return failed(c.gap(TRUNCATED, 'PULL_COMMITS_LIST_LIMIT', listed=listed_commits, limit=COMMIT_LIST_LIMIT))
             return failed(c.gap(MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
     target_base = pr['base']['sha']
     response, compare = c.json(f'{c.base}/compare/{target_base}...{head}', what='compare')
@@ -444,6 +479,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         c.gap(TRUNCATED, 'PROVIDER_FILE_LIST_LIMIT', listed=reported)
         complete = False
     files = []
+    null_sha = []
     used = 0
     for entry in listed:
         # previous_filename exists only for renames and copies (shape-checked for those).
@@ -459,6 +495,8 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         status = entry['status'] if entry['status'] in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'} else 'changed'
         sides = {}
         if status != 'removed':
+            if entry['sha'] is None:
+                null_sha.append(name)  # Read at the pinned head; checked against its own Git blob.
             source = fetch_source(c, name, head, 'head', entry['sha'])
             if source:
                 sides['head'] = source
@@ -507,6 +545,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
                 c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
         picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit, search_pause) if entries else []
         blobs = {e['path']: e['sha'] for e in entries or []}
+        sizes = {e['path']: e.get('size') for e in entries or []}  # None: the tree omitted the optional size.
         for path, reason in picks:
             if len(context) >= context_limit or len(files) + len(context) >= MAX_FILES:
                 break
@@ -524,7 +563,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         # context read had a gap. COLLECTED: every context request answered.
         status = 'FAILED' if entries is None else 'PARTIAL' if len(c.gaps) > before_context else 'COLLECTED'
         report['context_selection'] = dict(status=status, method=selection_method,
-                                           files=[dict(path=f['path'], reason=r) for f, r in context],
+                                           files=[dict(path=f['path'], reason=r, tree_size=sizes.get(f['path'])) for f, r in context],
                                            candidates_considered=len(picks),
                                            gaps=[dict(g) for g in c.gaps[before_context:]])
     files.extend(f for f, _ in context)
@@ -539,14 +578,18 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     if len(title.encode()) > 500:
         title = title.encode()[:500].decode('utf-8', 'ignore')
         c.gap(TRUNCATED, 'PR_TITLE_BYTE_BOUND')
-    # The pinned head is re-read once; a moved open head makes the capture stale.
+    # The pinned head is re-read once; a moved open head makes the capture stale. When the head
+    # is unchanged, the final response decides provenance (a pull merged during capture is no
+    # longer pending review); the collected revisions stay as captured.
+    final = pr
     if not pin and pr['state'] == 'open':
         response, again = c.json(f'{c.base}/pulls/{number}', what='pull_recheck')
         if again is None:
             return failed(c.gaps[-1] if response is None else c.gap(MISSING, 'PULL_RECHECK_UNAVAILABLE'))
         if again['head']['sha'] != head:
             return failed(c.gap(MISSING, 'HEAD_MOVED_DURING_CAPTURE'))
-    pending = pr['state'] == 'open' and head == pr['head']['sha']
+        final = again
+    pending = final['state'] == 'open' and head == final['head']['sha']
     omitted = []
     for g in c.gaps:
         if g['path'] and accepted(g['path']):
@@ -565,7 +608,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         revisions=dict(base=merge_base, head=head, target_base=target_base),
         provenance=dict(kind='FROZEN_PENDING_REVIEW' if pending else 'KNOWN_HISTORICAL_DEVELOPMENT',
                         captured_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now)),
-                        state_at_capture=pr['state'], merged_at_capture=pr['merged'],
+                        state_at_capture=final['state'], merged_at_capture=final['merged'],
                         pending_review_version=pending, capture_sha256=digest(c.requests),
                         source_authentication='NOT_INDEPENDENTLY_VERIFIED'),
         scope=dict(reported_changed_files=scope_count, complete_listing=complete, omitted_sources=omitted,
@@ -578,8 +621,9 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         return failed(c.gap(MISSING, 'SNAPSHOT_VALIDATION:' + str(exc)))
     report.update(status='COMPLETE' if not c.gaps else 'INCOMPLETE', head_sha=head, merge_base=merge_base,
                   target_base=target_base, pinned_head=bool(pin), pr_head_at_capture=pr['head']['sha'],
-                  pr_state=pr['state'], merged=pr['merged'],
+                  pr_state=final['state'], merged=final['merged'],
                   counts=dict(changed_reported=reported, changed_included=included, context_included=len(context)),
+                  compare_sha_null=null_sha,
                   snapshot_id=identifier, input_sha256=digest(snapshot),
                   gap_counts={k: sum(g['kind'] == k for g in c.gaps) for k in (MISSING, TRUNCATED, TRANSPORT)})
     return report, snapshot
@@ -604,6 +648,9 @@ def main(argv=None):
     code = 0 if snapshot is not None else 3
     report['exit_status'] = code
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    if snapshot is None:
+        # A failed recapture must not leave an earlier snapshot at the documented path.
+        (args.out_dir / 'snapshot.json').unlink(missing_ok=True)
     (args.out_dir / 'capture.json').write_bytes(canonical(report))
     if snapshot is not None:
         (args.out_dir / 'snapshot.json').write_bytes(canonical(snapshot))

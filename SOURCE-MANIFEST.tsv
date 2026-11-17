@@ -21,6 +21,14 @@ benchmarks/reviewbench/v3/README.md	benchmarks/reviewbench/v3/README.md	8556f980
 benchmarks/reviewbench/v3/holdout_adjudicate.py	benchmarks/reviewbench/v3/holdout_adjudicate.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Loopback reader, serialized draft updates, terminal entry and interactive freeze
 benchmarks/reviewbench/v3/holdout_reader.html	benchmarks/reviewbench/v3/holdout_reader.html	8556f980d0873ed55e2583df9a9dd6a57670371a	Self-contained offline adjudication interface
 benchmarks/reviewbench/v3/holdout_reveal.py	benchmarks/reviewbench/v3/holdout_reveal.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Reveal and reconcile decisions after the freeze
+benchmarks/reviewbench/v4/README.md	New	M3	Three-arm comparison method, blind judging and run commands
+benchmarks/reviewbench/v4/RESULTS.md	New	M3	Aggregate holdout results with PLAN and addendum digests; no per-PR data
+benchmarks/reviewbench/v4/arms.py	New	M3	Evaluation snapshot without PR text; Static, Direct and Agent arms in one candidate form
+benchmarks/reviewbench/v4/judge.py	New	M3	Blind packet, judge request and strict response, reveal and agreement sample
+benchmarks/reviewbench/v4/m3.py	New	M3	Attended operator CLI for capture, arm runs, judging and scoring
+benchmarks/reviewbench/v4/plan.py	New	M3	Exclusion list, dev/holdout split and PLAN.json admission checks
+benchmarks/reviewbench/v4/provider.py	New	M3	Single-attempt Direct and judge calls with an official-price cost ledger
+benchmarks/reviewbench/v4/score.py	New	M3	Deduplicated-defect scoring, repetition summary, bootstrap and stop rule
 benchmarks/reviewbench/vendor/ReviewBench/LICENSE	review-bench/ReviewBench/LICENSE	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/vendor/ReviewBench/scripts/eval/input-validation.ts	review-bench/ReviewBench/scripts/eval/input-validation.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/vendor/ReviewBench/scripts/lib/types.ts	review-bench/ReviewBench/scripts/lib/types.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
@@ -90,6 +98,7 @@ tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa
 tests/test_provider_process.py	New	Batch 3	Product HTTP and real process-kill test using local Mock transport
 tests/test_review.py	tests/test_review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained static regressions with synthetic fixtures
 tests/test_reviewbench_offline.py	New	Batch 4	Regression coverage for freeze, anchors, C1 grid and arithmetic
+tests/test_reviewbench_v4.py	New	M3	Synthetic scoring, bootstrap, blind round trip, exclusion and Direct contract tests
 tests/test_verification.py	tests/test_verification.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic cases adapted to the current repository contract and provider view
 tests/test_verification_v2.py	tests/test_verification_v2.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic v2 and v2.1 contract and citation regressions
 web/app.js	web/public-app.js	344acf0c8bd59157e81d03aa771547e2b330986e	Add Mock readiness polling, acknowledgement and task submission

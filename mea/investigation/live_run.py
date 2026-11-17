@@ -83,17 +83,25 @@ def main(argv=None):
     coordinator.boot()
     sender = deepseek.Sender(secret)
     del secret
-    broker = Broker(store, sender=sender, lane=lane)
+    broker = None
     try:
-        task = create(store, snapshot, budget=lane.scope['task_budget'], lane=lane, confirmed=True,
-                      first_turn=lane.scope['first_turn'], tool_profile=lane.scope['tool_profile'])
+        # Store-level conditions (an already initialized ledger with another budget, a second
+        # worker, the task cap, a scope mismatch) are operator-reachable: report BLOCKED.
+        try:
+            broker = Broker(store, sender=sender, lane=lane)
+            task = create(store, snapshot, budget=lane.scope['task_budget'], lane=lane, confirmed=True,
+                          first_turn=lane.scope['first_turn'], tool_profile=lane.scope['tool_profile'])
+        except ValueError as exc:
+            print('BLOCKED: ' + str(exc), flush=True)
+            return 2
         sender.validate = lambda body: protocol.validate_task_request(body, task)
         if task['status'] in TERMINAL:
             print('EXISTING_TERMINAL_TASK ' + task['id'], flush=True)
         else:
             task = drive(store, coordinator, broker, task['id'])
     finally:
-        broker.close()
+        if broker is not None:
+            broker.close()
         coordinator.shutdown()
     task = store.get(task['id'])
     with store.connection() as db:

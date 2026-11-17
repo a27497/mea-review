@@ -323,6 +323,71 @@ class CredentialTests(unittest.TestCase):
         self.assertIn('BLOCKED: CREDENTIAL_EMPTY', out.getvalue())
         self.assertFalse(store.exists())
 
+    # M3 step 1 (CodeRabbit on f941812): operator-reachable store conditions are BLOCKED, not a traceback.
+    def cli(self, budget_usd=1):
+        self.write('DEEPSEEK_API_KEY=' + DUMMY + '\n')
+        snapshot = Path(self.temp.name) / 'snapshot.json'
+        snapshot.write_bytes(canonical(value()))
+        scope_file = Path(self.temp.name) / 'scope.json'
+        scope_file.write_bytes(canonical(scope([digest(value())], budget_usd=budget_usd)))
+        self.store = Path(self.temp.name) / 'store'
+        self.out = Path(self.temp.name) / 'out.json'
+        return ['--scope', str(scope_file), '--snapshot', str(snapshot), '--store', str(self.store),
+                '--out', str(self.out), '--credentials', str(self.path), '--confirm-real-provider']
+
+    def finish_plan(self, body):
+        return completion([call('c1', native.FINISH, reason='ZERO_CANDIDATES', candidates=[])])
+
+    def test_cli_reports_broker_and_create_value_errors_as_blocked(self):
+        conn = FakeConnection(self.finish_plan)
+        FakeConnection.posts = []
+        real_sender = deepseek.Sender
+        sender = lambda secret: real_sender(secret, connect=conn.factory)
+        # Normal: a run against a fresh store completes and writes its summary.
+        args = self.cli()
+        out = io.StringIO()
+        with patch('socket.socket.connect', side_effect=AssertionError('NO_NETWORK')), \
+                patch.object(live_run.deepseek, 'Sender', sender), redirect_stdout(out):
+            self.assertEqual(live_run.main(args), 0)
+        self.assertEqual(json.loads(self.out.read_text())['status'], 'COMPLETED')
+        self.assertEqual(len(FakeConnection.posts), 1)
+        # Violation: the same store with another budget_usd. Broker refuses the changed grant record
+        # (before reaching the ledger) instead of exiting with a traceback.
+        args = self.cli(budget_usd=2)
+        out = io.StringIO()
+        with patch.object(live_run.deepseek, 'Sender', sender), redirect_stdout(out):
+            self.assertEqual(live_run.main(args), 2)
+        self.assertIn('BLOCKED: LIVE_AUTHORIZATION_SCOPE_MISMATCH', out.getvalue())
+        self.assertEqual(len(FakeConnection.posts), 1)
+        # Boundary: create() refuses (task cap); the broker lease is released and shutdown ran.
+        args = self.cli()
+        out = io.StringIO()
+        with patch.object(live_run.deepseek, 'Sender', sender), \
+                patch.object(live_run, 'create', side_effect=ValueError('PHASE3_TASK_CAP')), redirect_stdout(out):
+            self.assertEqual(live_run.main(args), 2)
+        self.assertIn('BLOCKED: PHASE3_TASK_CAP', out.getvalue())
+        lane = authorization.live(scope([digest(value())]))
+        store = Store(self.store)
+        Coordinator(store, lane).boot()
+        Broker(store, sender=deepseek.Sender(DUMMY, connect=conn.factory), lane=lane).close()  # Lease is free.
+        self.assertEqual(len(FakeConnection.posts), 1)
+
+    def test_live_ledger_limits_are_per_store(self):
+        # The live ledger lives inside one store: a fresh store starts at zero, so LIVE_CAP is a
+        # per-store bound on budget_usd, not an account-level or phase-wide cap.
+        lane = authorization.live(scope([digest(value())]))
+        for name, used in (('a', 7), ('b', 0)):
+            store = Store(Path(self.temp.name) / name)
+            Coordinator(store, lane).boot()
+            Broker(store, sender=deepseek.Sender(DUMMY), lane=lane).close()
+            with store.connection() as db:
+                summary = spending.LIVE.summary(db)
+                self.assertEqual((summary['cap_nano_usd'], summary['accounted_nano_usd']), (spending.NANO, 0))
+        self.assertEqual(spending.LIVE_CAP, 30 * spending.NANO)
+        authorization.live(scope([digest(value())], budget_usd=30))  # Boundary: largest accepted per store.
+        with self.assertRaisesRegex(ValueError, 'LIVE_SCOPE_BUDGET'):
+            authorization.live(scope([digest(value())], budget_usd=31))
+
     def test_sender_requires_a_task_validator(self):
         with self.assertRaisesRegex(ValueError, 'LIVE_VALIDATOR_REQUIRED'):
             deepseek.Sender(DUMMY).start({})

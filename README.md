@@ -151,4 +151,4 @@ All examples are self-owned synthetic fixtures. See the
 Static findings and Mock candidates require human judgment. Source hashes
 bind evidence to the supplied snapshot. Source authenticity, target execution,
 live capture, real AI and GitHub writeback are outside this local candidate.
-Project licensing and publication approval are pending.
+The project is licensed under the [MIT License](LICENSE). Publication approval is pending.

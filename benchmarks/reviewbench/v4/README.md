@@ -61,7 +61,14 @@ python3 -B benchmarks/reviewbench/v4/m3.py score --plan PLAN.json --set dev --ro
 ~~~
 
 Billed commands need `--confirm-real-provider` and make one POST per request
-with no retry. A holdout run also needs a FROZEN PLAN.json, a coordinator
+with no retry. `--workers N` (at most the PLAN's `max_in_flight_per_arm`, and
+at most 4) runs up to N tasks of one arm at a time; arms run one after another.
+Direct and judge use threads. Agent tasks are split into batches of at most 8,
+each with its own scope and SQLite store, run in separate processes; tasks in
+one store stay sequential. The cost ledger takes an exclusive file lock to
+reserve each request's peak bound before it is sent, so concurrent workers
+cannot pass its cap together. Recorded task times start when the worker
+sends, so they exclude queueing; each result records the concurrency. A holdout run also needs a FROZEN PLAN.json, a coordinator
 approval naming its SHA-256, the frozen code SHA and a clean `mea/` and
 `benchmarks/` tree. A completed arm and repetition cannot run again. An
 infrastructure rerun names `--only SLUGS` and `--reason`, which is logged.

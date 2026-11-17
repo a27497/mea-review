@@ -6,8 +6,10 @@ has its own single POST here: one attempt, bounded response, key redaction, reas
 length is kept). Neither path retries. Costs use the official list price (peak-rate upper bound kept)
 and are estimates, not the provider invoice.
 """
+import fcntl
 import http.client
 import json
+import uuid
 import ssl
 import time
 from pathlib import Path
@@ -54,12 +56,19 @@ def reservation(model, input_bytes, max_tokens):
 
 
 class Ledger:
-    """Append-only JSONL of every billed attempt, with a declared cap checked before each send."""
+    """Append-only JSONL of every billed attempt with a cap checked before each send.
+
+    admit() appends a reservation under an exclusive flock and returns its ID; record() settles it.
+    Open reservations count at their reserved peak bound, so concurrent workers (threads or
+    processes) can never admit more than the cap together. Rows without `kind` are settled
+    entries from before reservations existed.
+    """
 
     def __init__(self, path, cap_nano):
         self.path = Path(path)
         self.cap = cap_nano
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path = self.path.with_name(self.path.name + '.lock')
 
     def entries(self):
         if not self.path.exists():
@@ -67,17 +76,45 @@ class Ledger:
         return [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
 
     def spent_peak(self):
-        return sum(e['peak_nano'] if e['peak_nano'] is not None else e['reserved_nano'] for e in self.entries())
+        rows = self.entries()
+        settled = {r['id']: r for r in rows if r.get('kind') == 'settle'}
+        total = 0
+        for r in rows:
+            if r.get('kind') == 'reserve':
+                done = settled.get(r['id'])
+                total += done['peak_nano'] if done and done.get('peak_nano') is not None else r['reserved_nano']
+            elif 'kind' not in r:
+                total += r['peak_nano'] if r.get('peak_nano') is not None else r['reserved_nano']
+        return total
 
-    def admit(self, reserved):
-        if reserved > REQUEST_CAP_NANO:
-            raise ValueError('REQUEST_USD_CAP')
-        if self.spent_peak() + reserved > self.cap:
-            raise ValueError('LEDGER_CAP')
-
-    def record(self, **row):
+    def _append(self, row):
         with self.path.open('a') as f:
             f.write(json.dumps(row, sort_keys=True) + '\n')
+
+    def admit(self, reserved, **tags):
+        if reserved > REQUEST_CAP_NANO:
+            raise ValueError('REQUEST_USD_CAP')
+        with self.lock_path.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if self.spent_peak() + reserved > self.cap:
+                    raise ValueError('LEDGER_CAP')
+                identifier = uuid.uuid4().hex
+                self._append(dict(kind='reserve', id=identifier, reserved_nano=reserved, at=time.time(), **tags))
+                return identifier
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def record(self, identifier, **row):
+        with self.lock_path.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                self._append(dict(row, kind='settle', id=identifier))
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def settled(self):
+        return [r for r in self.entries() if r.get('kind') == 'settle' or 'kind' not in r]
 
 
 def direct_call(body, secret, validate, connect=None):

@@ -259,6 +259,30 @@ def completion(arguments, finish='tool_calls'):
                                       prompt_cache_hit_tokens=0, prompt_cache_miss_tokens=1000))).encode()
 
 
+def admit_many(path, cap, amount, attempts):
+    ledger = provider.Ledger(path, cap)
+    count = 0
+    for _ in range(attempts):
+        try:
+            ledger.admit(amount)
+            count += 1
+        except ValueError:
+            pass
+    return count
+
+
+def fake_provider():
+    """Spawned-worker initializer: a fake DeepSeek key and connection that always finishes with zero candidates."""
+    from mea.investigation import deepseek
+    real = deepseek.Sender
+
+    class Finish(FakeConnection):
+        def __init__(self):
+            super().__init__(completion(dict(reason='ZERO_CANDIDATES', summary='s', candidates=[])))
+    deepseek.read_key = lambda *a: 'sk-' + 'a' * 32
+    deepseek.Sender = lambda secret: real(secret, connect=lambda h, p, timeout: Finish())
+
+
 class DirectArmTests(unittest.TestCase):
     def setUp(self):
         guard = patch('socket.socket.connect', side_effect=AssertionError('NO_NETWORK'))
@@ -295,6 +319,13 @@ class DirectArmTests(unittest.TestCase):
             arms.direct_request(raw)
         profile = protocol.FIRST_TURN_PROFILES[protocol.FIRST_TURN_NO_PR_TEXT]
         self.assertEqual((profile['pull_request'], profile['initial_diff_bytes']), (False, 30000))
+        planned = protocol.FIRST_TURN_PROFILES[protocol.FIRST_TURN_NO_PR_TEXT_PLANNED]
+        self.assertFalse(planned['pull_request'])
+        task = dict(identity=dict(first_turn=protocol.FIRST_TURN_NO_PR_TEXT_PLANNED, tool_profile=native.CROSS_FILE))
+        self.assertTrue(protocol.task_prompt(task).endswith(protocol.PLANNING_NOTE))
+        self.assertNotIn(protocol.PR_TEXT_NOTE, protocol.task_prompt(task))
+        base = dict(identity=dict(first_turn=protocol.FIRST_TURN_NO_PR_TEXT, tool_profile=native.CROSS_FILE))
+        self.assertNotIn(protocol.PLANNING_NOTE, protocol.task_prompt(base))
 
     def test_direct_uses_the_agent_finish_schema_and_validation(self):
         self.assertEqual(self.body['tools'], [t for t in native.definitions(native.CROSS_FILE) if t['function']['name'] == native.FINISH])
@@ -350,13 +381,29 @@ class DirectArmTests(unittest.TestCase):
         self.assertIsNone(provider.cost('deepseek-flash', None))
         with tempfile.TemporaryDirectory() as tmp:
             ledger = provider.Ledger(Path(tmp) / 'l.jsonl', cap_nano=1000)
-            ledger.admit(600)
-            ledger.record(peak_nano=None, reserved_nano=600)
+            first = ledger.admit(600)
             with self.assertRaisesRegex(ValueError, 'LEDGER_CAP'):
-                ledger.admit(500)
-            ledger.admit(400)
+                ledger.admit(500)  # The open reservation counts at its reserved bound.
+            ledger.record(first, peak_nano=100, reserved_nano=600)
+            ledger.admit(500)  # Settled at 100: 600 used now.
+            self.assertEqual(ledger.spent_peak(), 600)
             with self.assertRaisesRegex(ValueError, 'REQUEST_USD_CAP'):
                 provider.Ledger(Path(tmp) / 'm.jsonl', cap_nano=10 ** 12).admit(provider.REQUEST_CAP_NANO + 1)
+            legacy = Path(tmp) / 'legacy.jsonl'
+            legacy.write_text(json.dumps(dict(arm='direct', peak_nano=300, reserved_nano=900)) + '\n')
+            self.assertEqual(provider.Ledger(legacy, 1000).spent_peak(), 300)
+
+    def test_ledger_never_admits_past_its_cap_under_concurrent_processes(self):
+        import multiprocessing
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'l.jsonl'
+            ctx = multiprocessing.get_context('spawn')
+            with ctx.Pool(4) as pool:
+                admitted = sum(pool.starmap(admit_many, [(str(path), 1000, 7, 40)] * 4))
+            ledger = provider.Ledger(path, 1000)
+            self.assertEqual(admitted, 1000 // 7)
+            self.assertLessEqual(ledger.spent_peak(), 1000)
+            self.assertEqual(len([e for e in ledger.entries() if e['kind'] == 'reserve']), admitted)
 
 
 if __name__ == '__main__':
@@ -428,7 +475,9 @@ class OperatorFlowTests(unittest.TestCase):
                          for c in user['candidates']]
             return dict(http_status=200, finish_reason='stop', content=json.dumps(dict(decisions=decisions)),
                         usage=dict(prompt_tokens=10, completion_tokens=5, total_tokens=15))
-        common = ['--plan', str(self.plan_path), '--set', 'dev', '--round', 'r1', '--runs', str(self.runs)]
+        def round_args(name):
+            return ['--plan', str(self.plan_path), '--set', 'dev', '--round', name, '--runs', str(self.runs)]
+        common = round_args('r1')
         with patch.object(deepseek, 'read_key', lambda *a: 'sk-' + 'a' * 32), \
                 patch.object(self.m3.provider, 'direct_call', lambda body, secret, validate: wire.call(body, secret, connect=Conn(), validate=validate)), \
                 patch.object(deepseek, 'Sender', lambda secret: real_sender(secret, connect=lambda h, p, timeout: Conn())), \
@@ -442,6 +491,14 @@ class OperatorFlowTests(unittest.TestCase):
                 self.cli('run', *common, '--arm', 'direct', '--rep', '1', '--confirm-real-provider')
             self.cli('judge', *common, '--confirm-real-provider')
             self.cli('score', *common)
+            with self.assertRaisesRegex(SystemExit, 'workers'):
+                self.cli('run', *round_args('r9'), '--arm', 'direct', '--rep', '1', '--confirm-real-provider', '--workers', '2')
+            self.plan['concurrency'] = dict(max_in_flight_per_arm=4)
+            self.plan_path.write_bytes(canonical(self.plan))
+            parallel = round_args('r2')
+            self.cli('run', *parallel, '--arm', 'direct', '--rep', '1', '--confirm-real-provider', '--workers', '4')
+            with self.assertRaisesRegex(SystemExit, 'workers'):
+                self.cli('run', *parallel, '--arm', 'direct', '--rep', '2', '--confirm-real-provider', '--workers', '5')
         base = self.runs / 'dev' / 'r1'
         direct = json.loads((base / 'direct' / 'rep1' / 'owned--fixture--1.json').read_text())
         agent = json.loads((base / 'agent' / 'rep1' / 'owned--fixture--1.json').read_text())
@@ -453,9 +510,35 @@ class OperatorFlowTests(unittest.TestCase):
         self.assertIn(result['stop_rule']['outcome'], ('THRESHOLD_MET', 'NEGATIVE_RESULT_STOP'))
         ledger = [json.loads(l) for l in (self.private / 'ledger.jsonl').read_text().splitlines()]
         self.assertEqual(sorted({e['arm'] for e in ledger}), ['agent', 'direct', 'judge'])
+        parallel = json.loads((self.runs / 'dev' / 'r2' / 'direct' / 'rep1' / 'owned--fixture--1.json').read_text())
+        self.assertEqual((parallel['concurrency'], len(parallel['candidates'])), (4, 1))
+        self.assertEqual(json.loads((self.runs / 'dev' / 'r2' / 'direct' / 'rep1' / 'manifest.json').read_text())['workers'], 4)
+        self.assertEqual([len(b) for b in self.m3.agent_batches(list(range(35)), 4)], [8, 8, 8, 8, 3])
+        self.assertEqual([len(b) for b in self.m3.agent_batches(list(range(8)), 4)], [2, 2, 2, 2])
+        self.assertEqual([len(b) for b in self.m3.agent_batches(list(range(8)), 1)], [8])
         packet = (base / 'judge' / 'packet.json').read_text()
         self.assertNotIn('"agent"', packet)
         self.assertNotIn('"direct"', packet)
+
+    def test_agent_batches_run_in_separate_processes_and_stores(self):
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        snapshot = arms.evaluation_snapshot(value())
+        other = json.loads(json.dumps(value()))
+        other['files'][0]['sides']['head']['text'] += ''
+        rows = [dict(slug='owned--fixture--1', input_sha256=digest(snapshot))]
+        out = self.runs / 'dev' / 'p' / 'agent' / 'rep1'
+        ledger = self.private / 'ledger.jsonl'
+        tags = dict(set='dev', round='p', rep=1, plan_sha256='0' * 64, code_sha='f' * 40, workers=2)
+        with ProcessPoolExecutor(2, mp_context=multiprocessing.get_context('spawn'), initializer=fake_provider) as pool:
+            futures = [pool.submit(self.m3.agent_batch, str(self.private), b, rows, out, ledger, 10 ** 9,
+                                   dict(tags, rep=b), self.plan['arms']['agent']) for b in (1, 2)]
+            lines = [f.result() for f in futures]
+        self.assertEqual([l[0]['status'] for l in lines], ['COMPLETED', 'COMPLETED'])
+        stores = sorted(p.name for p in (self.private / 'stores').iterdir())
+        self.assertEqual(stores, ['mea-live-m3-dev-p-r1-b1', 'mea-live-m3-dev-p-r2-b2'])
+        entries = provider.Ledger(ledger, 10 ** 9).entries()
+        self.assertEqual(sorted(e['kind'] for e in entries), ['reserve', 'reserve', 'settle', 'settle'])
 
     def test_holdout_requires_frozen_plan_approval_and_code_sha(self):
         common = ['--plan', str(self.plan_path), '--set', 'holdout', '--round', 'final', '--runs', str(self.runs), '--arm', 'static', '--rep', '1']

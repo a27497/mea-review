@@ -113,86 +113,124 @@ def run_static(private, rows, out):
         write(out / f"{s['slug']}.json", result)
 
 
+MAX_WORKERS = 4  # Declared in PLAN.json: at most 4 tasks in flight per arm; arms never overlap.
+
+
+def direct_one(private, s, out, ledger, secret, tags):
+    snapshot = load_eval(private, s)
+    body, context = arms.direct_request(snapshot)
+    reserved = provider.reservation('deepseek-flash', len(canonical(body)), arms.DIRECT_OUTPUT_TOKENS)
+    entry = ledger.admit(reserved, arm='direct', slug=s['slug'], **tags)
+    start = time.monotonic()  # Per-task time: starts when this worker sends, so queueing is excluded.
+    receipt = provider.direct_call(body, secret, arms.validate_direct_body)
+    elapsed = round(time.monotonic() - start, 3)
+    price = provider.cost('deepseek-flash', receipt.get('usage'))
+    ledger.record(entry, at=time.time(), arm='direct', slug=s['slug'], model='deepseek-flash', usage=receipt.get('usage'),
+                  scheduled_nano=price and price['scheduled'], peak_nano=price and price['peak'], reserved_nano=reserved,
+                  http_status=receipt.get('http_status'), error=receipt.get('error'), **tags)
+    result = arms.direct_result(receipt, context)
+    result.update(slug=s['slug'], elapsed_seconds=elapsed, concurrency=tags['workers'],
+                  cost=dict(scheduled_nano=price and price['scheduled'], peak_nano=price and price['peak']))
+    write(out / f"{s['slug']}.json", result)
+    write(out / 'raw' / f"{s['slug']}.receipt.json", dict(request_body_sha256=digest(body), receipt=receipt))
+    return dict(slug=s['slug'], status=result['status'], reason=result['reason'], candidates=len(result['candidates']), seconds=elapsed)
+
+
 def run_direct(private, rows, out, ledger, secret, tags):
-    for s in rows:
-        snapshot = load_eval(private, s)
-        body, context = arms.direct_request(snapshot)
-        reserved = provider.reservation('deepseek-flash', len(canonical(body)), arms.DIRECT_OUTPUT_TOKENS)
-        ledger.admit(reserved)
-        start = time.monotonic()
-        receipt = provider.direct_call(body, secret, arms.validate_direct_body)
-        elapsed = round(time.monotonic() - start, 3)
-        price = provider.cost('deepseek-flash', receipt.get('usage'))
-        ledger.record(at=time.time(), arm='direct', slug=s['slug'], model='deepseek-flash', usage=receipt.get('usage'),
-                      scheduled_nano=price and price['scheduled'], peak_nano=price and price['peak'], reserved_nano=reserved,
-                      http_status=receipt.get('http_status'), error=receipt.get('error'), **tags)
-        result = arms.direct_result(receipt, context)
-        result.update(slug=s['slug'], elapsed_seconds=elapsed,
-                      cost=dict(scheduled_nano=price and price['scheduled'], peak_nano=price and price['peak']))
-        write(out / f"{s['slug']}.json", result)
-        write(out / 'raw' / f"{s['slug']}.receipt.json", dict(request_body_sha256=digest(body), receipt=receipt))
-        print(json.dumps(dict(slug=s['slug'], status=result['status'], reason=result['reason'],
-                              candidates=len(result['candidates']), seconds=elapsed)), flush=True)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=tags['workers']) as pool:
+        for line in pool.map(lambda s: direct_one(private, s, out, ledger, secret, tags), rows):
+            print(json.dumps(line), flush=True)
 
 
 AGENT_TASK_RESERVATION = 512000 * 300 + 6 * 1600 * 1200  # nano-USD peak bound of one product-budget task
 
 
-def run_agent(private, rows, out, ledger, secret, tags, config):
+def agent_batches(rows, workers):
+    """Contiguous batches of at most 8 tasks (one scope and store each), at least `workers` batches when possible."""
+    size = max(1, min(8, -(-len(rows) // max(1, workers))))
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
+def agent_batch(private, b, batch, out, ledger_path, ledger_cap, tags, config):
+    """One scope and its own store, tasks in sequence. Runs in its own process, so no store or SQLite file is shared."""
     from mea.investigation import authorization, deepseek, live_run, real_protocol as protocol
     from mea.investigation.provider_worker import Broker
     from mea.investigation.real import Coordinator, create
     from mea.investigation.tasks import Store, TERMINAL
-    batches = [rows[i:i + 8] for i in range(0, len(rows), 8)]
-    for b, batch in enumerate(batches, 1):
-        snaps = {s['slug']: load_eval(private, s) for s in batch}
-        scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}", inputs=[digest(v) for v in snaps.values()],
-                     max_tasks=len(batch), max_requests=6 * len(batch), tool_profile=config['tool_profile'],
-                     first_turn=config['first_turn'], approval=config['approval'], budget_usd=config['scope_budget_usd'],
-                     task_budget=config['task_budget'])
-        lane = authorization.live(scope)
-        store_dir = Path(private) / 'stores' / scope['id']
-        write(out / 'scopes' / f"{scope['id']}.json", scope)
-        store = Store(store_dir)
-        coordinator = Coordinator(store, lane)
-        coordinator.boot()
-        sender = deepseek.Sender(secret)
-        broker = Broker(store, sender=sender, lane=lane)
-        try:
-            for s in batch:
-                ledger.admit(AGENT_TASK_RESERVATION)
-                start = time.monotonic()
-                task = create(store, snaps[s['slug']], budget=lane.scope['task_budget'], lane=lane, confirmed=True,
-                              first_turn=lane.scope['first_turn'], tool_profile=lane.scope['tool_profile'])
-                sender.validate = lambda body, task=task: protocol.validate_task_request(body, task)
-                if task['status'] not in TERMINAL:
-                    task = live_run.drive(store, coordinator, broker, task['id'])
-                elapsed = round(time.monotonic() - start, 3)
-                task = store.get(task['id'])
-                spend = [r.get('shared_spending') or {} for r in task['requests']]
-                scheduled = sum(x.get('scheduled_nano_usd') or 0 for x in spend)
-                peak = sum(x.get('accounted_nano_usd') or 0 for x in spend)
-                ledger.record(at=time.time(), arm='agent', slug=s['slug'], model='deepseek-flash', usage=task['usage'],
-                              scheduled_nano=scheduled, peak_nano=peak, reserved_nano=AGENT_TASK_RESERVATION,
-                              requests=len(task['requests']), status=task['status'], reason=task['reason'], **tags)
-                result = arms.agent_result(task)
-                result.update(slug=s['slug'], elapsed_seconds=elapsed, task_id=task['id'],
-                              cost=dict(scheduled_nano=scheduled, peak_nano=peak))
-                write(out / f"{s['slug']}.json", result)
-                with store.connection() as db:
-                    summary = live_run.summary(task, lane.spending.summary(db))
-                write(out / 'raw' / f"{s['slug']}.task.json", summary)
-                print(json.dumps(dict(slug=s['slug'], status=task['status'], reason=task['reason'], requests=len(task['requests']),
-                                      tools=result['tools'], candidates=len(result['candidates']), seconds=elapsed)), flush=True)
-        finally:
-            broker.close()
-            coordinator.shutdown()
+    secret = deepseek.read_key()
+    ledger = provider.Ledger(ledger_path, ledger_cap)
+    lines = []
+    snaps = {s['slug']: load_eval(private, s) for s in batch}
+    scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}", inputs=[digest(v) for v in snaps.values()],
+                 max_tasks=len(batch), max_requests=6 * len(batch), tool_profile=config['tool_profile'],
+                 first_turn=config['first_turn'], approval=config['approval'], budget_usd=config['scope_budget_usd'],
+                 task_budget=config['task_budget'])
+    lane = authorization.live(scope)
+    store_dir = Path(private) / 'stores' / scope['id']
+    write(out / 'scopes' / f"{scope['id']}.json", scope)
+    store = Store(store_dir)
+    coordinator = Coordinator(store, lane)
+    coordinator.boot()
+    sender = deepseek.Sender(secret)
+    broker = Broker(store, sender=sender, lane=lane)
+    try:
+        for s in batch:
+            entry = ledger.admit(AGENT_TASK_RESERVATION, arm='agent', slug=s['slug'], **tags)
+            start = time.monotonic()
+            task = create(store, snaps[s['slug']], budget=lane.scope['task_budget'], lane=lane, confirmed=True,
+                          first_turn=lane.scope['first_turn'], tool_profile=lane.scope['tool_profile'])
+            sender.validate = lambda body, task=task: protocol.validate_task_request(body, task)
+            if task['status'] not in TERMINAL:
+                task = live_run.drive(store, coordinator, broker, task['id'])
+            elapsed = round(time.monotonic() - start, 3)
+            task = store.get(task['id'])
+            spend = [r.get('shared_spending') or {} for r in task['requests']]
+            scheduled = sum(x.get('scheduled_nano_usd') or 0 for x in spend)
+            peak = sum(x.get('accounted_nano_usd') or 0 for x in spend)
+            ledger.record(entry, at=time.time(), arm='agent', slug=s['slug'], model='deepseek-flash', usage=task['usage'],
+                          scheduled_nano=scheduled, peak_nano=peak, reserved_nano=AGENT_TASK_RESERVATION,
+                          requests=len(task['requests']), status=task['status'], reason=task['reason'], **tags)
+            result = arms.agent_result(task)
+            result.update(slug=s['slug'], elapsed_seconds=elapsed, task_id=task['id'], concurrency=tags['workers'], batch=scope['id'],
+                          cost=dict(scheduled_nano=scheduled, peak_nano=peak))
+            write(out / f"{s['slug']}.json", result)
+            with store.connection() as db:
+                summary = live_run.summary(task, lane.spending.summary(db))
+            write(out / 'raw' / f"{s['slug']}.task.json", summary)
+            lines.append(dict(slug=s['slug'], status=task['status'], reason=task['reason'], requests=len(task['requests']),
+                              tools=result['tools'], candidates=len(result['candidates']), seconds=elapsed))
+    finally:
+        broker.close()
+        coordinator.shutdown()
+    return lines
+
+
+def run_agent(private, rows, out, ledger, secret, tags, config):
+    batches = agent_batches(rows, tags['workers'])
+    if tags['workers'] == 1:
+        for b, batch in enumerate(batches, 1):
+            for line in agent_batch(private, b, batch, out, ledger.path, ledger.cap, tags, config):
+                print(json.dumps(line), flush=True)
+        return
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=tags['workers'], mp_context=multiprocessing.get_context('spawn')) as pool:
+        futures = [pool.submit(agent_batch, private, b, batch, out, ledger.path, ledger.cap, tags, config)
+                   for b, batch in enumerate(batches, 1)]
+        for f in futures:
+            for line in f.result():
+                print(json.dumps(line), flush=True)
 
 
 def cmd_run(args):
     plan, plan_sha = planning.load_plan(args.plan, args.plan_sha256)
     head, dirty = git_state()
-    tags = dict(set=args.set, rep=args.rep, round=args.round, plan_sha256=plan_sha, code_sha=head)
+    workers = args.workers
+    limit = plan.get('concurrency', {}).get('max_in_flight_per_arm', 1)
+    if not 1 <= workers <= min(limit, MAX_WORKERS):
+        raise SystemExit(f'BLOCKED: --workers must be between 1 and {min(limit, MAX_WORKERS)} (PLAN concurrency)')
+    tags = dict(set=args.set, rep=args.rep, round=args.round, plan_sha256=plan_sha, code_sha=head, workers=workers)
     out = Path(args.runs) / args.set / args.round / args.arm / f'rep{args.rep}'
     if args.set == 'holdout':
         planning.holdout_admission(plan, plan_sha, read(args.approval) if args.approval else None)
@@ -221,7 +259,8 @@ def cmd_run(args):
             run_agent(args.private, rows, out, ledger, secret, tags, plan['arms']['agent'])
     if not only:
         write(out / 'manifest.json', dict(plan_sha256=plan_sha, code_sha=head, dirty=dirty, set=args.set, arm=args.arm, rep=args.rep,
-                                         round=args.round, started_at=started, finished_at=time.time(), samples=[s['slug'] for s in rows]))
+                                         round=args.round, workers=workers, started_at=started, finished_at=time.time(),
+                                         samples=[s['slug'] for s in rows]))
 
 
 # ---- judge ----------------------------------------------------------------------------------
@@ -261,31 +300,47 @@ def cmd_judge(args):
     secret = deepseek.read_key()
     ledger = provider.Ledger(Path(args.private) / 'ledger.jsonl', int(plan['budget']['ledger_cap_usd'] * NANO))
     only = set(args.only.split(',')) if args.only else None
+    workers = args.workers
+    limit = plan.get('concurrency', {}).get('max_in_flight_per_arm', 1)
+    if not 1 <= workers <= min(limit, MAX_WORKERS):
+        raise SystemExit(f'BLOCKED: --workers must be between 1 and {min(limit, MAX_WORKERS)} (PLAN concurrency)')
+    todo = []
     for pr in packet['prs']:
         if pr['slug'] in doc['decisions'] or (only and pr['slug'] not in only):
             continue
         if not pr['candidates']:
             doc['decisions'][pr['slug']] = {}
             continue
+        todo.append(pr)
+
+    def judge_one(pr):
         body = judging.judge_request(pr)
         reserved = provider.reservation(judging.JUDGE_MODEL, len(canonical(body)), judging.JUDGE_MAX_TOKENS)
-        ledger.admit(reserved)
+        entry = ledger.admit(reserved, arm='judge', slug=pr['slug'], set=args.set, round=args.round)
         receipt = provider.judge_call(body, secret)
         price = provider.cost(judging.JUDGE_MODEL, receipt.get('usage'))
-        ledger.record(at=time.time(), arm='judge', slug=pr['slug'], model=judging.JUDGE_MODEL, usage=receipt.get('usage'),
+        ledger.record(entry, at=time.time(), arm='judge', slug=pr['slug'], model=judging.JUDGE_MODEL, usage=receipt.get('usage'),
                       scheduled_nano=price and price['scheduled'], peak_nano=price and price['peak'], reserved_nano=reserved,
-                      http_status=receipt.get('http_status'), error=receipt.get('error'), set=args.set, round=args.round, plan_sha256=plan_sha)
-        write(jdir / 'raw' / f"{pr['slug']}.receipt.json", dict(request_body_sha256=digest(body), receipt=receipt))
+                      http_status=receipt.get('http_status'), error=receipt.get('error'), set=args.set, round=args.round,
+                      plan_sha256=plan_sha, workers=workers)
+        write(jdir / 'raw' / f"{pr['slug']}.receipt.json", dict(request_body_sha256=digest(body), receipt=receipt, workers=workers))
         try:
             if receipt.get('error') or receipt.get('finish_reason') != 'stop':
                 raise ValueError('JUDGE_RECEIPT:' + str(receipt.get('error') or receipt.get('finish_reason')))
-            doc['decisions'][pr['slug']] = judging.parse_judgement(receipt.get('content'), pr)
-            status = 'JUDGED'
+            return pr, judging.parse_judgement(receipt.get('content'), pr), 'JUDGED', receipt
         except ValueError as exc:
-            status = 'JUDGE_FAILED:' + str(exc)
-        write(decisions_path, doc)
-        print(json.dumps(dict(slug=pr['slug'], candidates=len(pr['candidates']), status=status,
-                              seconds=receipt.get('elapsed_seconds'))), flush=True)
+            return pr, None, 'JUDGE_FAILED:' + str(exc), receipt
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # Decisions are written by this thread only, after each judgement returns.
+        for pr, parsed, status, receipt in pool.map(judge_one, todo):
+            if parsed is not None:
+                doc['decisions'][pr['slug']] = parsed
+            write(decisions_path, doc)
+            print(json.dumps(dict(slug=pr['slug'], candidates=len(pr['candidates']), status=status,
+                                  seconds=receipt.get('elapsed_seconds'))), flush=True)
+    write(decisions_path, doc)
 
 
 # ---- score ----------------------------------------------------------------------------------
@@ -328,7 +383,9 @@ def operations(plan, set_name, base):
                         seconds_p50=seconds[len(seconds) // 2] if seconds else None, seconds_max=seconds[-1] if seconds else None,
                         cost_usd_scheduled=sched, cost_usd_peak=peak,
                         cost_usd_per_pr_scheduled=sched / len(rows) if rows else None, tool_calls=tools,
-                        candidates=sum(len(r['candidates']) for r in rows), rejected=sum(len(r['rejected']) for r in rows))
+                        candidates=sum(len(r['candidates']) for r in rows), rejected=sum(len(r['rejected']) for r in rows),
+                        concurrency=sorted({r.get('concurrency', 1) for r in rows}),
+                        seconds_note='per-task time measured from send to result; queueing excluded')
     return ops
 
 
@@ -403,6 +460,7 @@ def main(argv=None):
         if name in ('run', 'judge'):
             p.add_argument('--confirm-real-provider', action='store_true')
             p.add_argument('--only')
+            p.add_argument('--workers', type=int, default=1)
         if name == 'run':
             p.add_argument('--arm', choices=arms.ARMS, required=True)
             p.add_argument('--rep', type=int, required=True)

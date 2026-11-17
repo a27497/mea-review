@@ -361,3 +361,119 @@ class DirectArmTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OperatorFlowTests(unittest.TestCase):
+    """End-to-end m3.py flow on one synthetic sample with fake transports: run, judge, score, holdout guard."""
+
+    def setUp(self):
+        guard = patch('socket.socket.connect', side_effect=AssertionError('NO_NETWORK'))
+        guard.start()
+        self.addCleanup(guard.stop)
+        import m3
+        self.m3 = m3
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.private, self.runs = root / 'private', root / 'runs'
+        snapshot = arms.evaluation_snapshot(value())
+        sample = self.private / 'samples' / 'owned--fixture--1'
+        sample.mkdir(parents=True)
+        (sample / 'eval-snapshot.json').write_bytes(canonical(snapshot))
+        gold = score.dedupe_gold('owned--fixture--1', [dict(comment_id=1, defect='k', path='shop/pricing.py', line=2,
+                                                            body='discount None crashes', summary='None discount subtraction')])
+        (sample / 'gold.json').write_bytes(canonical(dict(defects=gold)))
+        row = dict(slug='owned--fixture--1', repository='owned/fixture', number=1, pin=snapshot['revisions']['head'],
+                   input_sha256=digest(snapshot))
+        self.plan = dict(schema=planning.PLAN_SCHEMA, status='DRAFT', samples=dict(dev=[row], holdout=[row]),
+                         budget=dict(ledger_cap_usd=1), judge=dict(packet_seed='s'), statistics=dict(bootstrap_resamples=50, bootstrap_seed=1),
+                         arms=dict(agent=dict(tool_profile=native.CROSS_FILE, first_turn=protocol.FIRST_TURN_NO_PR_TEXT,
+                                              task_budget=protocol.budget(dict(output_bytes=500000)), scope_budget_usd=1, approval='unit test')),
+                         frozen=dict(code_sha='f' * 40))
+        self.plan_path = root / 'PLAN.json'
+        self.plan_path.write_bytes(canonical(self.plan))
+        self.anchor_line = 2
+
+    def finish_body(self, body):
+        payload = json.loads(body['messages'][1]['content'])
+        rev = payload['revisions']['head']
+        if 'files' in payload and isinstance(payload['files'][0], dict) and 'head_rows' in payload['files'][0]:
+            ids = [r[1] for r in payload['files'][0]['head_rows'] if r[0] == self.anchor_line]
+        else:
+            ids = []
+        cands = [dict(title='discount None', trigger='checkout() without discount', impact='TypeError',
+                      change=dict(path='shop/pricing.py', side='head', line=self.anchor_line, revision=rev), evidence_ids=ids)] if ids else []
+        return completion(dict(reason='HYPOTHESIS_SUPPORTED' if cands else 'ZERO_CANDIDATES', summary='s', candidates=cands))
+
+    def cli(self, *argv):
+        out = io.StringIO()
+        with patch('sys.stdout', out):
+            self.m3.main(['--private', str(self.private), *argv])
+        return out.getvalue()
+
+    def test_dev_round_runs_judges_and_scores(self):
+        from mea.investigation import deepseek
+        real_sender = deepseek.Sender
+
+        class Conn(FakeConnection):
+            def __init__(inner):
+                super().__init__(b'')
+
+            def request(inner, method, path, body, headers):
+                inner.raw = self.finish_body(json.loads(body))
+
+        def judge_call(body, secret, connect=None):
+            user = json.loads(body['messages'][1]['content'])
+            decisions = [dict(candidate_id=c['candidate_id'], verdict='MATCH', gold_id=user['gold'][0]['gold_id'], novel_valid=None, reason='same')
+                         for c in user['candidates']]
+            return dict(http_status=200, finish_reason='stop', content=json.dumps(dict(decisions=decisions)),
+                        usage=dict(prompt_tokens=10, completion_tokens=5, total_tokens=15))
+        common = ['--plan', str(self.plan_path), '--set', 'dev', '--round', 'r1', '--runs', str(self.runs)]
+        with patch.object(deepseek, 'read_key', lambda *a: 'sk-' + 'a' * 32), \
+                patch.object(self.m3.provider, 'direct_call', lambda body, secret, validate: wire.call(body, secret, connect=Conn(), validate=validate)), \
+                patch.object(deepseek, 'Sender', lambda secret: real_sender(secret, connect=lambda h, p, timeout: Conn())), \
+                patch.object(self.m3.provider, 'judge_call', judge_call), patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+            self.cli('run', *common, '--arm', 'static', '--rep', '1')
+            with self.assertRaisesRegex(SystemExit, 'confirm-real-provider'):
+                self.cli('run', *common, '--arm', 'direct', '--rep', '1')
+            self.cli('run', *common, '--arm', 'direct', '--rep', '1', '--confirm-real-provider')
+            self.cli('run', *common, '--arm', 'agent', '--rep', '1', '--confirm-real-provider')
+            with self.assertRaisesRegex(SystemExit, 'already ran'):
+                self.cli('run', *common, '--arm', 'direct', '--rep', '1', '--confirm-real-provider')
+            self.cli('judge', *common, '--confirm-real-provider')
+            self.cli('score', *common)
+        base = self.runs / 'dev' / 'r1'
+        direct = json.loads((base / 'direct' / 'rep1' / 'owned--fixture--1.json').read_text())
+        agent = json.loads((base / 'agent' / 'rep1' / 'owned--fixture--1.json').read_text())
+        self.assertEqual((direct['status'], len(direct['candidates'])), ('COMPLETED', 1))
+        self.assertEqual(agent['status'], 'COMPLETED')
+        result = json.loads((base / 'score.json').read_text())
+        self.assertEqual(result['arms']['direct']['f1']['mean'], 1.0)
+        self.assertEqual(result['arms']['static']['f1']['mean'], 0.0)
+        self.assertIn(result['stop_rule']['outcome'], ('THRESHOLD_MET', 'NEGATIVE_RESULT_STOP'))
+        ledger = [json.loads(l) for l in (self.private / 'ledger.jsonl').read_text().splitlines()]
+        self.assertEqual(sorted({e['arm'] for e in ledger}), ['agent', 'direct', 'judge'])
+        packet = (base / 'judge' / 'packet.json').read_text()
+        self.assertNotIn('"agent"', packet)
+        self.assertNotIn('"direct"', packet)
+
+    def test_holdout_requires_frozen_plan_approval_and_code_sha(self):
+        common = ['--plan', str(self.plan_path), '--set', 'holdout', '--round', 'final', '--runs', str(self.runs), '--arm', 'static', '--rep', '1']
+        with self.assertRaisesRegex(ValueError, 'PLAN_NOT_FROZEN'):
+            self.cli('run', *common)
+        frozen = dict(self.plan, status='FROZEN')
+        self.plan_path.write_bytes(canonical(frozen))
+        sha = planning.file_sha256(self.plan_path)
+        with self.assertRaisesRegex(ValueError, 'HOLDOUT_APPROVAL_REQUIRED'):
+            self.cli('run', *common)
+        approval = Path(self.temp.name) / 'approval.json'
+        approval.write_bytes(canonical(dict(plan_sha256=sha, coordinator_reply='msg-1')))
+        with patch.object(self.m3, 'git_state', lambda: ('e' * 40, False)), self.assertRaisesRegex(SystemExit, 'frozen code SHA'):
+            self.cli('run', *common, '--approval', str(approval))
+        with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+            self.cli('run', *common, '--approval', str(approval))
+            with self.assertRaisesRegex(SystemExit, 'already ran'):
+                self.cli('run', *common, '--approval', str(approval))
+            self.cli('run', *common, '--approval', str(approval), '--only', 'owned--fixture--1', '--reason', 'unit test infra rerun')
+        reruns = (self.runs / 'holdout' / 'final' / 'static' / 'rep1' / 'reruns.jsonl').read_text()
+        self.assertIn('unit test infra rerun', reruns)

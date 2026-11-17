@@ -104,7 +104,9 @@ means the evidence is absent or unusable, for example 404, binary or not UTF-8.
 TRUNCATED means a bound cut existing evidence, such as an omitted provider
 patch or an oversized source. TRANSPORT means no definitive answer, for example
 a network error, 401/403/429, 5xx, or a 200 response whose JSON or required
-fields are unusable. A failed capture still writes `capture.json` with its
+fields are unusable. Required provider fields are never filled with defaults:
+an absent `files`, `tree` or search `items` list is such a TRANSPORT gap, while
+an explicitly empty list means no results. A failed capture still writes `capture.json` with its
 requests and `exit_status`, and the command exits 3.
 
 `snapshot.json` is a mea-snapshot-v1 input. `omitted_sources` lists only gaps

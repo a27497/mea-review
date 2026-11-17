@@ -171,11 +171,20 @@ def _optional(value, kind):
     return value is None or isinstance(value, kind)
 
 
+def _has(d, key, kind):
+    """The field must be present with this type; a missing field is never read as a default."""
+    return key in d and isinstance(d[key], kind) and not (kind is int and type(d[key]) is bool)
+
+
+# Every field the reader uses must be present with its documented type. Only fields that
+# GitHub documents as nullable or as present for some records (body, merged_at, patch,
+# previous_filename on non-renames) may be null or absent. A required list that is absent is
+# MALFORMED_RESPONSE_STRUCTURE (TRANSPORT); an explicitly empty list means no results.
 def _pull(d):
-    return (isinstance(d, dict) and isinstance(d.get('head'), dict) and _sha(d['head'].get('sha'))
-            and isinstance(d.get('base'), dict) and _sha(d['base'].get('sha'))
-            and d.get('state') in ('open', 'closed') and _optional(d.get('title'), str) and _optional(d.get('body'), str)
-            and _optional(d.get('merged'), bool) and _optional(d.get('merged_at'), str))
+    return (isinstance(d, dict) and _has(d, 'head', dict) and _sha(d['head'].get('sha'))
+            and _has(d, 'base', dict) and _sha(d['base'].get('sha'))
+            and d.get('state') in ('open', 'closed') and _has(d, 'title', str) and 'body' in d and _optional(d['body'], str)
+            and _has(d, 'merged', bool) and 'merged_at' in d and _optional(d['merged_at'], str))
 
 
 def _commits(d):
@@ -183,40 +192,58 @@ def _commits(d):
 
 
 def _compare_file(f):
-    return (isinstance(f, dict) and isinstance(f.get('filename'), str) and isinstance(f.get('status'), str)
-            and _optional(f.get('previous_filename'), str) and _optional(f.get('patch'), str)
-            and _optional(f.get('sha'), str) and (f.get('changes') is None or type(f.get('changes')) is int))
+    if not (isinstance(f, dict) and _has(f, 'filename', str) and _has(f, 'status', str) and _has(f, 'changes', int)
+            and _optional(f.get('patch'), str) and _optional(f.get('previous_filename'), str)):
+        return False
+    if f['status'] in ('renamed', 'copied') and not _has(f, 'previous_filename', str):
+        return False
+    return f['status'] == 'removed' or _has(f, 'sha', str)
 
 
 def _compare(d):
-    return (isinstance(d, dict) and isinstance(d.get('merge_base_commit'), dict) and _sha(d['merge_base_commit'].get('sha'))
-            and isinstance(d.get('files', []), list) and all(_compare_file(f) for f in d.get('files', [])))
+    return (isinstance(d, dict) and _has(d, 'merge_base_commit', dict) and _sha(d['merge_base_commit'].get('sha'))
+            and _has(d, 'files', list) and all(_compare_file(f) for f in d['files']))
+
+
+def _tree_entry(e):
+    if not (isinstance(e, dict) and _has(e, 'path', str) and _has(e, 'type', str)):
+        return False
+    return e['type'] != 'blob' or (_has(e, 'size', int) and _has(e, 'sha', str))
 
 
 def _tree(d):
-    return (isinstance(d, dict) and isinstance(d.get('tree'), list) and _optional(d.get('truncated'), bool)
-            and all(isinstance(e, dict) and isinstance(e.get('path'), str) and isinstance(e.get('type'), str)
-                    and (e.get('size') is None or type(e.get('size')) is int) and _optional(e.get('sha'), str) for e in d['tree']))
+    return isinstance(d, dict) and _has(d, 'tree', list) and _has(d, 'truncated', bool) and all(_tree_entry(e) for e in d['tree'])
 
 
 def _search(d):
-    return (isinstance(d, dict) and isinstance(d.get('items', []), list)
-            and all(isinstance(i, dict) and isinstance(i.get('path'), str) for i in d.get('items', [])))
+    return (isinstance(d, dict) and _has(d, 'items', list) and _has(d, 'incomplete_results', bool)
+            and all(isinstance(i, dict) and _has(i, 'path', str) for i in d['items']))
 
 
-SHAPES = dict(pull=_pull, pull_recheck=_pull, pull_commits=_commits, compare=_compare, tree=_tree, search=_search)
+def _contents(d):
+    # A directory answers with a list; symlinks and submodules carry another type. Both are
+    # well formed and become MISSING (not a regular file) later.
+    if isinstance(d, list):
+        return True
+    if not (isinstance(d, dict) and _has(d, 'type', str)):
+        return False
+    return d['type'] != 'file' or (_has(d, 'size', int) and _has(d, 'sha', str) and _has(d, 'encoding', str) and _has(d, 'content', str))
+
+
+SHAPES = dict(pull=_pull, pull_recheck=_pull, pull_commits=_commits, compare=_compare, tree=_tree, search=_search,
+              contents=_contents)
 
 
 def decode_source(capture, data, path, side, expected_blob=None):
     """Full UTF-8 text from a contents response, or None after a MISSING/TRUNCATED gap."""
-    if not isinstance(data, dict) or data.get('type') != 'file':
+    if not isinstance(data, dict) or data['type'] != 'file':
         capture.gap(MISSING, 'NOT_A_REGULAR_FILE', path, side)
         return None
-    size = data.get('size')
-    if type(size) is int and size > SOURCE_BYTES:
+    size = data['size']  # Shape-checked: size, sha, encoding and content are present.
+    if size > SOURCE_BYTES:
         capture.gap(TRUNCATED, 'SOURCE_BYTE_BOUND', path, side, bytes=size, limit=SOURCE_BYTES)
         return None
-    if data.get('encoding') != 'base64' or not isinstance(data.get('content'), str):
+    if data['encoding'] != 'base64':
         capture.gap(TRUNCATED, 'PROVIDER_CONTENT_OMITTED', path, side)
         return None
     try:
@@ -225,7 +252,7 @@ def decode_source(capture, data, path, side, expected_blob=None):
         capture.gap(MISSING, 'CONTENT_ENCODING_INVALID', path, side)
         return None
     blob = git_blob_sha(raw)
-    if blob != data.get('sha') or (expected_blob and blob != expected_blob):
+    if blob != data['sha'] or (expected_blob and blob != expected_blob):
         capture.gap(MISSING, 'BLOB_SHA_MISMATCH', path, side)
         return None
     if b'\0' in raw:
@@ -311,7 +338,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
     then other imports. Search runs on the default branch; every hit is re-resolved
     in the pinned head tree and fetched at the head SHA.
     """
-    known = {e['path']: e for e in tree}
+    known = {e['path']: e for e in tree}  # Blob entries only, each with a checked size and sha.
     changed = {f['path'] for f in files} | {f['base_path'] for f in files}
     buckets = dict(tests=[], callers=[], used_imports=[], imports=[])
     seen = set()
@@ -319,7 +346,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
     def add(bucket, path, reason):
         entry = known.get(path)
         if (path in changed or path in seen or entry is None or language(path) is None
-                or accepted(path) is None or (entry.get('size') or 0) > SOURCE_BYTES):
+                or accepted(path) is None or entry['size'] > SOURCE_BYTES):
             return
         seen.add(path)
         buckets[bucket].append((path, reason))
@@ -336,8 +363,14 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit, pause
         response, data = capture.json(f'/search/code?q={quote(name)}+repo:{owner}/{repo}&per_page=20',
                                       what='search', file=None, side='head')
         if data is None:
+            # TRANSPORT and malformed answers were recorded by capture.json(); a definitive
+            # 404/422 is recorded here, so context selection never reads it as "no match".
+            if response is not None:
+                capture.gap(MISSING, f'SEARCH_HTTP_{response.status}', None, 'head', request='search')
             continue
-        for item in data.get('items', [])[:20]:
+        if data['incomplete_results']:
+            capture.gap(TRUNCATED, 'PROVIDER_SEARCH_INCOMPLETE', None, 'head', request='search')
+        for item in data['items'][:20]:
             add('callers', item['path'], f'CODE_SEARCH_DEFAULT_BRANCH:{name}')
     for f in files:
         head_side = f['sides'].get('head')
@@ -391,7 +424,9 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         response, commits = c.json(f'{c.base}/pulls/{number}/commits?per_page=100', what='pull_commits')
         if response is None:
             return failed(c.gaps[-1])
-        if pin not in [x['sha'] for x in commits or []]:
+        if commits is None:
+            return failed(c.gap(MISSING, f'PULL_COMMITS_HTTP_{response.status}'))
+        if pin not in [x['sha'] for x in commits]:
             return failed(c.gap(MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
     target_base = pr['base']['sha']
     response, compare = c.json(f'{c.base}/compare/{target_base}...{head}', what='compare')
@@ -402,7 +437,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     merge_base = compare['merge_base_commit']['sha']
     if merge_base == head:
         return failed(c.gap(MISSING, 'HEAD_EQUALS_MERGE_BASE'))
-    listed = compare.get('files') or []
+    listed = compare['files']  # Shape-checked list; [] is an explicit empty change listing.
     reported = len(listed)
     complete = True
     if reported >= PROVIDER_FILE_LIST:
@@ -411,6 +446,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     files = []
     used = 0
     for entry in listed:
+        # previous_filename exists only for renames and copies (shape-checked for those).
         name, before = entry['filename'], entry.get('previous_filename') or entry['filename']
         if accepted(name) is None or accepted(before) is None:
             c.gap(MISSING, 'PATH_NOT_ACCEPTED', None, None, github_path=name[:256])
@@ -423,7 +459,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         status = entry['status'] if entry['status'] in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'} else 'changed'
         sides = {}
         if status != 'removed':
-            source = fetch_source(c, name, head, 'head', entry.get('sha'))
+            source = fetch_source(c, name, head, 'head', entry['sha'])
             if source:
                 sides['head'] = source
         if status != 'added':
@@ -438,7 +474,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         used += size
         patch = entry.get('patch')
         if patch is None:
-            if entry.get('changes') != 0 and all(g['path'] not in (name, before) or g['kind'] == TRANSPORT for g in c.gaps):
+            if entry['changes'] != 0 and all(g['path'] not in (name, before) or g['kind'] == TRANSPORT for g in c.gaps):
                 c.gap(TRUNCATED, 'PROVIDER_PATCH_OMITTED', name, None)
         elif len(patch.encode()) > PATCH_BYTES or len(patch.splitlines()) > PATCH_LINES:
             c.gap(TRUNCATED, 'PATCH_BOUND', name, None, bytes=len(patch.encode()))
@@ -464,12 +500,13 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         if tree is None:
             if response is not None:  # A definitive 404/422: the pinned tree is not available.
                 c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')
-            tree = {}
-        entries = [e for e in tree.get('tree', []) if e.get('type') == 'blob']
-        if tree.get('truncated'):
-            c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
+            entries = None
+        else:
+            entries = [e for e in tree['tree'] if e['type'] == 'blob']  # [] is an explicitly empty tree.
+            if tree['truncated']:
+                c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
         picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit, search_pause) if entries else []
-        blobs = {e['path']: e.get('sha') for e in entries}
+        blobs = {e['path']: e['sha'] for e in entries or []}
         for path, reason in picks:
             if len(context) >= context_limit or len(files) + len(context) >= MAX_FILES:
                 break
@@ -485,20 +522,20 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
                                  sides=dict(base=dict(source), head=dict(source))), reason))
         # FAILED: no tree, so no context could be selected. PARTIAL: tree, search or a
         # context read had a gap. COLLECTED: every context request answered.
-        status = 'FAILED' if not entries and not tree.get('tree') else 'PARTIAL' if len(c.gaps) > before_context else 'COLLECTED'
+        status = 'FAILED' if entries is None else 'PARTIAL' if len(c.gaps) > before_context else 'COLLECTED'
         report['context_selection'] = dict(status=status, method=selection_method,
                                            files=[dict(path=f['path'], reason=r) for f, r in context],
                                            candidates_considered=len(picks),
                                            gaps=[dict(g) for g in c.gaps[before_context:]])
     files.extend(f for f, _ in context)
-    body = pr.get('body') or ''
+    body = pr['body'] or ''  # GitHub returns null for an empty description.
     if '\0' in body:
         body = body.replace('\0', '')
         c.gap(MISSING, 'PR_BODY_NUL_REMOVED')
     if len(body.encode()) > BODY_BYTES:
         body = body.encode()[:BODY_BYTES].decode('utf-8', 'ignore')
         c.gap(TRUNCATED, 'PR_BODY_BYTE_BOUND', limit=BODY_BYTES)
-    title = (pr.get('title') or '').replace('\0', '')
+    title = pr['title'].replace('\0', '')
     if len(title.encode()) > 500:
         title = title.encode()[:500].decode('utf-8', 'ignore')
         c.gap(TRUNCATED, 'PR_TITLE_BYTE_BOUND')
@@ -528,7 +565,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         revisions=dict(base=merge_base, head=head, target_base=target_base),
         provenance=dict(kind='FROZEN_PENDING_REVIEW' if pending else 'KNOWN_HISTORICAL_DEVELOPMENT',
                         captured_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now)),
-                        state_at_capture=pr['state'], merged_at_capture=bool(pr.get('merged') or pr.get('merged_at')),
+                        state_at_capture=pr['state'], merged_at_capture=pr['merged'],
                         pending_review_version=pending, capture_sha256=digest(c.requests),
                         source_authentication='NOT_INDEPENDENTLY_VERIFIED'),
         scope=dict(reported_changed_files=scope_count, complete_listing=complete, omitted_sources=omitted,
@@ -541,7 +578,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         return failed(c.gap(MISSING, 'SNAPSHOT_VALIDATION:' + str(exc)))
     report.update(status='COMPLETE' if not c.gaps else 'INCOMPLETE', head_sha=head, merge_base=merge_base,
                   target_base=target_base, pinned_head=bool(pin), pr_head_at_capture=pr['head']['sha'],
-                  pr_state=pr['state'], merged=bool(pr.get('merged') or pr.get('merged_at')),
+                  pr_state=pr['state'], merged=pr['merged'],
                   counts=dict(changed_reported=reported, changed_included=included, context_included=len(context)),
                   snapshot_id=identifier, input_sha256=digest(snapshot),
                   gap_counts={k: sum(g['kind'] == k for g in c.gaps) for k in (MISSING, TRUNCATED, TRANSPORT)})

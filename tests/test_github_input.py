@@ -113,7 +113,8 @@ class GithubInputTests(unittest.TestCase):
         self.assertIsNone(pricing['patch'])
         self.assertEqual(set(pricing['sides']), {'base', 'head'})
         # A capped provider file listing marks the listing incomplete and skips context.
-        many = [dict(filename=f'pkg/m{i}.py', status='added', changes=1, patch='@@ -0,0 +1 @@\n+x = 1') for i in range(300)]
+        many = [dict(filename=f'pkg/m{i}.py', status='added', changes=1, patch='@@ -0,0 +1 @@\n+x = 1',
+                     sha=fx.git_blob_sha(b'x = 1\n')) for i in range(300)]
         report, snapshot = capture(REF, fx.Fetcher(compare_files=many), now=0)
         self.assertIn((TRUNCATED, 'PROVIDER_FILE_LIST_LIMIT', None), kinds(report))
         self.assertIn((TRUNCATED, 'FILE_COUNT_BOUND', 'pkg/m24.py'), kinds(report))
@@ -219,6 +220,151 @@ class GithubInputTests(unittest.TestCase):
         report, snapshot = capture(REF, fx.Fetcher(overrides={tree: {'tree': 'x'}}), now=0)
         self.assertEqual(snapshot['scope']['capture']['context_selection'], 'FAILED')
         self.assertEqual(snapshot['scope']['capture']['gaps'][0]['code'], 'MALFORMED_RESPONSE_STRUCTURE')
+
+    # Round 2: required provider fields are never defaulted. For each list field there are three
+    # controls: field absent (a gap), explicitly empty list (no match) and a normal list.
+    @staticmethod
+    def searching(value):
+        class Search(fx.Fetcher):
+            def get(self, path, accept):
+                if path.startswith('/search/code'):
+                    self.calls.append((path, accept))
+                    return value if isinstance(value, Response) else Response(200, json.dumps(value).encode())
+                return super().get(path, accept)
+        return Search()
+
+    def assert_context(self, snapshot, status, selection, gaps):
+        cap = snapshot['scope']['capture']
+        self.assertEqual((cap['status'], cap['context_selection']), (status, selection))
+        self.assertEqual([(g['kind'], g['code'], g['request']) for g in cap['gaps']], gaps)
+
+    def test_search_items_absent_empty_and_normal(self):
+        paths = lambda snap: [f['path'] for f in snap['files']]
+        report, snapshot = capture(REF, self.searching(dict(total_count=0, incomplete_results=False)), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'search')])
+        self.assertEqual(report['context_selection']['status'], 'PARTIAL')
+        self.assertNotIn('shop/cart.py', paths(snapshot))
+        self.assertIn('SNAPSHOT_CAPTURE_INCOMPLETE:context_selection=PARTIAL',
+                      CrossFileView.from_input(snapshot).execute('search', dict(query='total', revision=fx.HEAD))['unknown'])
+        report, snapshot = capture(REF, self.searching(dict(total_count=0, incomplete_results=False, items=[])), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        self.assertNotIn('shop/cart.py', paths(snapshot))
+        report, snapshot = capture(REF, self.searching(dict(total_count=1, incomplete_results=False, items=[dict(path='shop/cart.py')])), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        self.assertIn('shop/cart.py', paths(snapshot))
+
+    def test_search_completeness_flag_and_definitive_errors(self):
+        items = [dict(path='shop/cart.py')]
+        report, snapshot = capture(REF, self.searching(dict(total_count=1, items=items)), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'search')])
+        report, snapshot = capture(REF, self.searching(dict(total_count=9, incomplete_results=True, items=items)), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(TRUNCATED, 'PROVIDER_SEARCH_INCOMPLETE', 'search')])
+        self.assertIn('shop/cart.py', [f['path'] for f in snapshot['files']])
+        report, snapshot = capture(REF, self.searching(Response(422, b'{"message":"Validation Failed"}')), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(MISSING, 'SEARCH_HTTP_422', 'search')])
+
+    def test_compare_files_absent_empty_and_normal(self):
+        compare = f'{BASE}/compare/{fx.TARGET_BASE}...{fx.HEAD}'
+        merge_base = dict(sha=fx.MERGE_BASE)
+        report, snapshot = capture(REF, fx.Fetcher(overrides={compare: dict(merge_base_commit=merge_base)}), now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['failure']['kind'], report['failure']['code'], report['failure']['request']),
+                         (TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'compare'))
+        report, snapshot = capture(REF, fx.Fetcher(overrides={compare: dict(merge_base_commit=merge_base, files=[])}), now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (MISSING, 'NO_COLLECTABLE_CHANGED_FILE'))
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assertEqual((report['status'], report['counts']['changed_reported']), ('COMPLETE', 1))
+
+    def test_compare_file_fields_are_required(self):
+        base = fx.Fetcher().files()[0]
+        for missing in ('changes', 'sha', 'status', 'filename'):
+            with self.subTest(missing=missing):
+                row = {k: v for k, v in base.items() if k != missing}
+                report, snapshot = capture(REF, fx.Fetcher(compare_files=[row]), now=0)
+                self.assertEqual((report['failure']['code'], report['failure']['request']), ('MALFORMED_RESPONSE_STRUCTURE', 'compare'))
+        renamed = dict(base, status='renamed')
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[renamed]), now=0)
+        self.assertEqual(report['failure']['code'], 'MALFORMED_RESPONSE_STRUCTURE')  # previous_filename required for renames
+        # Fields GitHub omits legitimately: patch (large or binary diff) and sha of a removed file.
+        no_patch = {k: v for k, v in base.items() if k != 'patch'}
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[no_patch]), now=0)
+        self.assertIn((TRUNCATED, 'PROVIDER_PATCH_OMITTED', 'shop/pricing.py'), kinds(report))
+        head = {k: v for k, v in fx.HEAD_FILES.items() if k != 'web/view.ts'}
+        report, snapshot = capture(REF, fx.Fetcher(head=head), now=0)
+        removed = next(f for f in snapshot['files'] if f['path'] == 'web/view.ts')
+        self.assertEqual((removed['status'], list(removed['sides'])), ('removed', ['base']))
+
+    def test_tree_entries_absent_empty_and_normal(self):
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(truncated=False)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        self.assertEqual(report['counts']['context_included'], 0)
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(truncated=False, tree=[])}), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        self.assertEqual(report['counts']['context_included'], 0)
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        self.assertGreater(report['counts']['context_included'], 0)
+
+    def test_tree_flags_and_entry_fields_are_required(self):
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        entries = fx.Fetcher().routes()[tree]['tree']
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=entries)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=entries, truncated=True)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', 'tree')])
+        for missing in ('size', 'sha'):
+            with self.subTest(missing=missing):
+                broken = [{k: v for k, v in e.items() if k != missing} for e in entries]
+                report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=broken, truncated=False)}), now=0)
+                self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        directories = entries + [dict(path='shop', type='tree', sha='9' * 40)]  # Directory entries have no size.
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=directories, truncated=False)}), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+
+    def test_pinned_commit_list_absent_empty_and_normal(self):
+        commits = f'{BASE}/pulls/{fx.NUMBER}/commits?per_page=100'
+        pinned = REF + '@' + fx.HEAD
+        for value, outcome in [({'commits': []}, (TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE')),
+                               (Response(404, b'{}'), (MISSING, 'PULL_COMMITS_HTTP_404')),
+                               ([], (MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))]:
+            report, snapshot = capture(pinned, fx.Fetcher(overrides={commits: value}), now=0)
+            self.assertIsNone(snapshot)
+            self.assertEqual((report['failure']['kind'], report['failure']['code']), outcome)
+        report, snapshot = capture(pinned, fx.Fetcher(), now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+
+    def test_pull_fields_are_required_except_documented_nulls(self):
+        pull = f'{BASE}/pulls/{fx.NUMBER}'
+        base = fx.Fetcher().pull()
+        for missing in ('title', 'body', 'merged', 'merged_at', 'state'):
+            with self.subTest(missing=missing):
+                value = {k: v for k, v in base.items() if k != missing}
+                report, snapshot = capture(REF, fx.Fetcher(overrides={pull: value}), now=0)
+                self.assertEqual((report['failure']['kind'], report['failure']['code']), (TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE'))
+        report, snapshot = capture(REF, fx.Fetcher(overrides={pull: dict(base, body=None)}), now=0)
+        self.assertEqual(snapshot['pr']['body'], '')  # GitHub sends null for an empty description.
+        report, snapshot = capture(REF, fx.Fetcher(overrides={pull: dict(base, merged=False, merged_at=None)}), now=0)
+        self.assertFalse(snapshot['provenance']['merged_at_capture'])
+        report, snapshot = capture(REF, fx.Fetcher(overrides={pull: dict(base, merged='yes')}), now=0)
+        self.assertEqual(report['failure']['code'], 'MALFORMED_RESPONSE_STRUCTURE')
+
+    def test_contents_fields_are_required(self):
+        target = f'{BASE}/contents/shop/pricing.py?ref={fx.HEAD}'
+        good = fx.contents(fx.HEAD_FILES['shop/pricing.py'])
+        for missing in ('sha', 'size', 'encoding', 'content', 'type'):
+            with self.subTest(missing=missing):
+                value = {k: v for k, v in good.items() if k != missing}
+                report, snapshot = capture(REF, fx.Fetcher(overrides={target: value}), now=0)
+                self.assertEqual(kinds(report), [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'shop/pricing.py')])
+                self.assertNotIn('head', snapshot['files'][0]['sides'])
+        report, snapshot = capture(REF, fx.Fetcher(overrides={target: [dict(path='shop/pricing.py/x')]}), now=0)
+        self.assertEqual(kinds(report), [(MISSING, 'NOT_A_REGULAR_FILE', 'shop/pricing.py')])  # A directory listing.
+        report, snapshot = capture(REF, fx.Fetcher(overrides={target: dict(good, encoding='none', content='')}), now=0)
+        self.assertEqual(kinds(report), [(TRUNCATED, 'PROVIDER_CONTENT_OMITTED', 'shop/pricing.py')])
+        report, snapshot = capture(REF, fx.Fetcher(overrides={target: dict(good, sha='0' * 40)}), now=0)
+        self.assertEqual(kinds(report), [(MISSING, 'BLOB_SHA_MISMATCH', 'shop/pricing.py')])
 
     def test_cli_writes_the_failed_capture_before_a_nonzero_exit(self):
         with tempfile.TemporaryDirectory() as out, \

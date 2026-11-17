@@ -48,7 +48,8 @@ class Fetcher:
         self.calls = []
 
     def pull(self):
-        return dict(number=NUMBER, state=self.state, merged=self.merged, title='Add discount',
+        return dict(number=NUMBER, state=self.state, merged=self.merged, merged_at='2026-11-01T00:00:00Z' if self.merged else None,
+                    title='Add discount',
                     body='Adds a discount argument.', head=dict(sha=HEAD), base=dict(sha=TARGET_BASE, ref='main'))
 
     def files(self):
@@ -90,7 +91,7 @@ class Fetcher:
                 return value
             return Response(200, json.dumps(value).encode())
         if path.startswith('/search/code'):
-            return Response(200, json.dumps(dict(items=[dict(path='shop/cart.py')])).encode())
+            return Response(200, json.dumps(dict(total_count=1, incomplete_results=False, items=[dict(path='shop/cart.py')])).encode())
         routes = self.routes()
         if path not in routes:
             return Response(404, b'{"message":"Not Found"}')

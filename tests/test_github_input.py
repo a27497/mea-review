@@ -314,11 +314,10 @@ class GithubInputTests(unittest.TestCase):
         self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
         report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=entries, truncated=True)}), now=0)
         self.assert_context(snapshot, 'INCOMPLETE', 'PARTIAL', [(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', 'tree')])
-        for missing in ('size', 'sha'):
-            with self.subTest(missing=missing):
-                broken = [{k: v for k, v in e.items() if k != missing} for e in entries]
-                report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=broken, truncated=False)}), now=0)
-                self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        # sha is required by GitHub's git-tree schema; size is optional (M3 C2, see below).
+        broken = [{k: v for k, v in e.items() if k != 'sha'} for e in entries]
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=broken, truncated=False)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
         directories = entries + [dict(path='shop', type='tree', sha='9' * 40)]  # Directory entries have no size.
         report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=directories, truncated=False)}), now=0)
         self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
@@ -375,6 +374,159 @@ class GithubInputTests(unittest.TestCase):
             self.assertFalse((Path(out) / 'snapshot.json').exists())
         self.assertEqual((report['status'], report['exit_status'], report['failure']['code']), ('FAILED', 3, 'MALFORMED_RESPONSE_STRUCTURE'))
         self.assertEqual([r['path'] for r in report['requests']], [f'{BASE}/pulls/{fx.NUMBER}'])
+
+    # M3 step 1: C1/C2 from the M2 round-2 review and CodeRabbit's seven comments on f941812. Each
+    # case has a contract-violating input, a legal boundary input and the normal input.
+    def test_c1_compare_sha_key_absent_null_and_present(self):
+        row = fx.Fetcher().files()[0]
+        absent = {k: v for k, v in row.items() if k != 'sha'}
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[absent]), now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE'))
+        fetcher = fx.Fetcher(compare_files=[dict(row, sha=None)])
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertEqual(report['compare_sha_null'], ['shop/pricing.py'])
+        head = snapshot['files'][0]['sides']['head']
+        self.assertEqual((head['text'], head['blob_sha']), (fx.HEAD_FILES['shop/pricing.py'], row['sha']))
+        self.assertIn((f'{BASE}/contents/shop/pricing.py?ref={fx.HEAD}', github_input.JSON), fetcher.calls)
+        # With a null compare sha the contents are still checked against their own Git blob.
+        lying = dict(fx.contents(fx.HEAD_FILES['shop/pricing.py']), sha='0' * 40)
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={
+            f'{BASE}/contents/shop/pricing.py?ref={fx.HEAD}': lying}), now=0)
+        self.assertEqual(kinds(report), [(MISSING, 'BLOB_SHA_MISMATCH', 'shop/pricing.py')])
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assertEqual((report['status'], report['compare_sha_null']), ('COMPLETE', []))
+
+    def test_c2_tree_blob_size_invalid_absent_and_present(self):
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        entries = fx.Fetcher().routes()[tree]['tree']
+        wrong = [dict(e, size=str(e['size'])) for e in entries]
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=wrong, truncated=False)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        unknown = [{k: v for k, v in e.items() if k != 'size'} for e in entries]
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=unknown, truncated=False)}), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        picked = report['context_selection']['files']
+        self.assertTrue(picked and all(f['tree_size'] is None for f in picked))
+        # Unknown size, oversized contents: the byte bound applies when the contents are read.
+        big = 'x = 1\n' * 21000
+        head = dict(fx.HEAD_FILES, **{'tests/test_pricing.py': big})
+        sized = fx.Fetcher(head=head)
+        sized.compare_files = fx.Fetcher().files()
+        rows = [{k: v for k, v in e.items() if k != 'size'} for e in sized.routes()[tree]['tree']]
+        sized.overrides = {tree: dict(tree=rows, truncated=False)}
+        report, snapshot = capture(REF, sized, now=0)
+        self.assertIn((TRUNCATED, 'SOURCE_BYTE_BOUND', 'tests/test_pricing.py'), kinds(report))
+        self.assertNotIn('tests/test_pricing.py', [f['path'] for f in snapshot['files']])
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'COLLECTED', [])
+        self.assertTrue(all(isinstance(f['tree_size'], int) for f in report['context_selection']['files']))
+
+    def test_pinned_commit_pages_beyond_100_and_the_250_ceiling(self):
+        page = lambda n: f'{BASE}/pulls/{fx.NUMBER}/commits?per_page=100' + ('' if n == 1 else f'&page={n}')
+        fill = lambda start, count: [dict(sha=f'{i:040x}') for i in range(start, start + count)]
+        pinned = REF + '@' + fx.HEAD
+        # Violation: 250 listed commits without the pin cannot verify it; fewer means it is absent.
+        full = fx.Fetcher(overrides={page(1): fill(10, 100), page(2): fill(110, 100), page(3): fill(210, 50)})
+        report, snapshot = capture(pinned, full, now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['failure']['kind'], report['failure']['code'], report['failure']['listed']),
+                         (TRUNCATED, 'PULL_COMMITS_LIST_LIMIT', 250))
+        report, snapshot = capture(pinned, fx.Fetcher(overrides={page(1): fill(10, 100), page(2): fill(110, 30)}), now=0)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (MISSING, 'PINNED_HEAD_NOT_IN_PULL_COMMITS'))
+        self.assertEqual(sum('/commits' in r['path'] for r in report['requests']), 2)
+        # Boundary: commit 101 is on the second page.
+        fetcher = fx.Fetcher(overrides={page(1): fill(10, 100), page(2): [dict(sha=fx.HEAD)]})
+        report, snapshot = capture(pinned, fetcher, now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertEqual([p for p, _ in fetcher.calls if '/commits' in p], [page(1), page(2)])
+        fetcher = fx.Fetcher()
+        report, snapshot = capture(pinned, fetcher, now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertEqual([p for p, _ in fetcher.calls if '/commits' in p], [page(1)])
+
+    def recheck(self, final):
+        fetcher = fx.Fetcher(state='open', merged=False)
+        pulls = iter([fetcher.pull(), dict(fetcher.pull(), **final)])
+        original = fetcher.get
+
+        def get(path, accept):
+            if path == f'{BASE}/pulls/{fx.NUMBER}':
+                fetcher.calls.append((path, accept))
+                return Response(200, json.dumps(next(pulls)).encode())
+            return original(path, accept)
+        fetcher.get = get
+        return capture(REF, fetcher, now=0)
+
+    def test_provenance_uses_the_final_pull_state(self):
+        report, snapshot = self.recheck(dict(state='closed', merged=True, merged_at='2026-11-02T00:00:00Z'))
+        prov = snapshot['provenance']
+        self.assertEqual((prov['kind'], prov['state_at_capture'], prov['merged_at_capture'], prov['pending_review_version']),
+                         ('KNOWN_HISTORICAL_DEVELOPMENT', 'closed', True, False))
+        self.assertEqual((report['pr_state'], report['merged']), ('closed', True))
+        self.assertEqual(snapshot['revisions']['head'], fx.HEAD)  # Source revisions stay as captured.
+        report, snapshot = self.recheck(dict(state='closed', merged=False))
+        self.assertEqual((snapshot['provenance']['kind'], snapshot['provenance']['merged_at_capture']),
+                         ('KNOWN_HISTORICAL_DEVELOPMENT', False))
+        report, snapshot = self.recheck({})
+        self.assertEqual((snapshot['provenance']['kind'], snapshot['provenance']['state_at_capture']), ('FROZEN_PENDING_REVIEW', 'open'))
+
+    def run_cli(self, out, fetcher):
+        with patch('mea.github_input.RestFetcher', lambda *a, **k: fetcher), patch('mea.github_input.token', lambda: None), \
+                redirect_stdout(io.StringIO()):
+            return github_input.main([REF, '--out-dir', out])
+
+    def test_failed_recapture_removes_an_earlier_snapshot(self):
+        failing = lambda: fx.Fetcher(overrides={f'{BASE}/pulls/{fx.NUMBER}': Response(503, b'{}')})
+        with tempfile.TemporaryDirectory() as out:
+            snap = Path(out) / 'snapshot.json'
+            self.assertEqual(self.run_cli(out, fx.Fetcher()), 0)
+            first = snap.read_bytes()
+            self.assertEqual(self.run_cli(out, fx.Fetcher()), 0)  # Normal: a recapture rewrites it.
+            self.assertEqual(snap.read_bytes(), first)
+            self.assertEqual(self.run_cli(out, failing()), 3)     # Violation: the earlier snapshot is gone.
+            self.assertFalse(snap.exists())
+            self.assertEqual(json.loads((Path(out) / 'capture.json').read_text())['status'], 'FAILED')
+            self.assertEqual(self.run_cli(out, failing()), 3)     # Boundary: nothing to remove.
+            self.assertFalse(snap.exists())
+
+    def test_empty_sha_strings_are_rejected(self):
+        row = fx.Fetcher().files()[0]
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha='')]), now=0)
+        self.assertEqual((report['failure']['kind'], report['failure']['code']), (TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE'))
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        entries = fx.Fetcher().routes()[tree]['tree']
+        report, snapshot = capture(REF, fx.Fetcher(overrides={tree: dict(tree=[dict(e, sha='') for e in entries], truncated=False)}), now=0)
+        self.assert_context(snapshot, 'INCOMPLETE', 'FAILED', [(TRANSPORT, 'MALFORMED_RESPONSE_STRUCTURE', 'tree')])
+        head = {k: v for k, v in fx.HEAD_FILES.items() if k != 'web/view.ts'}
+        removed = fx.Fetcher(head=head)
+        removed.compare_files = [dict(r, sha='') if r['status'] == 'removed' else r for r in removed.files()]
+        report, snapshot = capture(REF, removed, now=0)
+        self.assertEqual(report['failure']['code'], 'MALFORMED_RESPONSE_STRUCTURE')
+        # Boundary: a removed file may carry a null sha; normal: a full SHA.
+        removed.compare_files = [dict(r, sha=None) if r['status'] == 'removed' else r for r in removed.files()]
+        report, snapshot = capture(REF, removed, now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+
+    def test_invalid_unicode_follows_the_failed_capture_path(self):
+        pull = f'{BASE}/pulls/{fx.NUMBER}'
+        body = json.dumps(fx.Fetcher().pull()).replace('"Add discount"', '"Add \\ud800 discount"').encode()
+        report, snapshot = capture(REF, fx.Fetcher(overrides={pull: Response(200, body)}), now=0)
+        self.assertIsNone(snapshot)
+        self.assertEqual((report['failure']['kind'], report['failure']['code'], report['failure']['request']),
+                         (TRANSPORT, 'INVALID_UNICODE_IN_RESPONSE', 'pull'))
+        with tempfile.TemporaryDirectory() as out:
+            self.assertEqual(self.run_cli(out, fx.Fetcher(overrides={pull: Response(200, body)})), 3)
+            self.assertEqual(json.loads((Path(out) / 'capture.json').read_text())['failure']['code'], 'INVALID_UNICODE_IN_RESPONSE')
+        # Boundary: an escaped surrogate pair is a valid astral character.
+        pair = json.dumps(fx.Fetcher().pull()).replace('"Add discount"', '"Add \\ud83d\\ude00 discount"').encode()
+        report, snapshot = capture(REF, fx.Fetcher(overrides={pull: Response(200, pair)}), now=0)
+        self.assertEqual(snapshot['pr']['title'], 'Add \U0001F600 discount')
+        report, snapshot = capture(REF, fx.Fetcher(), now=0)
+        self.assertEqual(snapshot['pr']['title'], 'Add discount')
 
     def test_patch_inconsistent_with_pinned_source_is_dropped(self):
         fetcher = fx.Fetcher()

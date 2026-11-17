@@ -106,8 +106,15 @@ patch or an oversized source. TRANSPORT means no definitive answer, for example
 a network error, 401/403/429, 5xx, or a 200 response whose JSON or required
 fields are unusable. Required provider fields are never filled with defaults:
 an absent `files`, `tree` or search `items` list is such a TRANSPORT gap, while
-an explicitly empty list means no results. A failed capture still writes `capture.json` with its
-requests and `exit_status`, and the command exits 3.
+an explicitly empty list means no results. A compare entry's `sha` key must be present but may
+be null; the head file is then read at the pinned head and checked against its own Git blob.
+A tree blob may omit its optional `size`; the byte bound is checked when its contents are read.
+Empty or malformed SHA strings and response strings that are not valid Unicode are TRANSPORT
+gaps. A pinned head is looked up across up to 250 PR commits (GitHub's list limit); a pin not
+found within a full 250-commit listing is TRUNCATED. When an open pull is re-read at the end of
+capture, its final state sets the snapshot provenance. A failed capture still writes
+`capture.json` with its requests and `exit_status`, removes any earlier `snapshot.json` in the
+output directory, and the command exits 3.
 
 `snapshot.json` is a mea-snapshot-v1 input. `omitted_sources` lists only gaps
 tied to a file path and side. `scope.capture` carries the typed capture
@@ -141,7 +148,10 @@ request caps, task budget, tool profile, first-turn profile, approval text and
 a USD budget. The live ledger prices reported usage at the official list price
 (https://api-docs.deepseek.com/quick_start/pricing, read 2026-11-17) and
 refuses a request whose peak-rate reservation exceeds USD 10. It is an
-estimate, not reconciled with the provider invoice.
+estimate, not reconciled with the provider invoice. Both limits apply to one
+`--store` only: a new store starts at zero, so they are not an account-level
+or phase-wide cap. Store-level refusals (a changed scope for an existing store,
+a second worker, the task cap) print `BLOCKED: <code>` and exit 2.
 
 The `cross-file-tools-v1` profile adds `related_files` (import edges between
 collected files, each citing its import line), JavaScript/TypeScript lexical

@@ -27,8 +27,11 @@ LIVE_PRICE_ID = 'deepseek-flash-official-20261117'
 LIVE_PRICE_SOURCE = 'https://api-docs.deepseek.com/quick_start/pricing (read 2026-11-17)'
 LIVE_RATES = dict(off_peak=dict(hit=3, miss=150, output=600), peak=dict(hit=6, miss=300, output=1200))
 NANO = 1_000_000_000
-LIVE_CAP = 30 * NANO          # M2 phase allocation in agent-control/SPEND.md
-LIVE_REQUEST_CAP = 10 * NANO  # Owner's single-request ceiling
+# Both limits are local ledger limits kept inside one task store (--store). A new store starts
+# at zero, so neither is an account-level or phase-wide spending cap; real spend is decided by the
+# provider invoice and tracked outside the store (agent-control/SPEND.md).
+LIVE_CAP = 30 * NANO          # Largest budget_usd one store's live ledger accepts
+LIVE_REQUEST_CAP = 10 * NANO  # Per-request reservation limit in one store's live ledger
 
 
 def tier(at=None):

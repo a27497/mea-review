@@ -375,6 +375,108 @@ class WritebackTests(unittest.TestCase):
         self.assertNotIn(TOKEN.encode(), out.read_bytes())
 
 
+    def bot(self, identifier, line=2):
+        return dict(id=identifier, html_url=f'https://github.com/{REPO}/pull/{NUMBER}#discussion_r{identifier}', user=dict(login='review-bot[bot]'),
+                    body='bot', path='quota.py', side='RIGHT', commit_id=H1, original_commit_id=H1, line=line, original_line=line, position=1, in_reply_to_id=None)
+
+    def test_other_comment_arriving_between_final_check_and_post_is_not_sent(self):
+        p = self.approve()
+        pub = Publisher(self.s, fault=lambda stage, _: self.fake.comments.append(self.bot(79)) if stage == 'after_sending' else None)
+        r = pub.send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(r['status'], 'NOT_SENT')
+        self.assertIn('OTHER_COMMENTS_AT_ANCHOR_CHANGED', r['events'][-1]['summary'])
+        self.assertEqual(self.posts(), 0)
+
+    def test_unrelated_new_comment_does_not_block_post(self):
+        p = self.approve()
+        pub = Publisher(self.s, fault=lambda stage, _: self.fake.comments.append(self.bot(80, line=1)) if stage == 'after_sending' else None)
+        self.assertEqual(pub.send(self.d['id'], p['confirmation_digest'], 'LIVE')['status'], 'PUBLISHED')
+
+    def test_left_anchor_requires_frozen_base_to_be_the_github_merge_base(self):
+        p = self.s.preview(self.d['id'])
+        value = copy.deepcopy(p)
+        value['payload']['side'] = 'LEFT'
+        remote = self.s.remote.read(dict(repository=REPO, number=NUMBER))
+        self.s.admit_remote(dict(value, base_revision=B), dict(remote, commentable={'quota.py': dict(LEFT=[2], RIGHT=[2])}))
+        with self.assertRaisesRegex(ValueError, 'LEFT_SIDE_BASE_MISMATCH'):
+            self.s.admit_remote(dict(value, base_revision=H1), remote)
+
+    def test_reconcile_with_multiple_matches_after_absence_blocks_release(self):
+        p = self.approve()
+        self.fake.fault = 'HTTP_500_NO_EFFECT'
+        pub = Publisher(self.s)
+        r = pub.send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(pub.reconcile(r['id'])['last_reconcile'], 'ABSENT')
+        mine = dict(self.bot(81), user=dict(login='sandbox-owner'), body=p['payload']['body'])
+        self.fake.comments += [mine, dict(mine, id=82, html_url=mine['html_url'][:-2] + '82')]
+        self.assertEqual(pub.reconcile(r['id'])['last_reconcile'], 'MULTIPLE')
+        with self.assertRaisesRegex(ValueError, 'RECONCILED_ABSENCE_REQUIRED'):
+            pub.release_after_reconcile(r['id'], True)
+
+    def test_existing_draft_is_blocked_after_rereview_marks_its_location(self):
+        first = self.sent()
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-v2'))
+        self.s.increment(self.r['id'], t2['id'])
+        d2 = self.s.draft(self.r['id'], t2['id'], t2['candidates'][0]['id'])
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        self.s.preview(d2['id'])
+        self.s.rereview(self.r['id'], t2['id'])
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+            self.s.preview(d2['id'])
+        self.assertEqual(self.posts(), 1)
+
+    def test_rereview_uses_the_requested_versions_predecessor_and_chains_mappings(self):
+        first = self.sent()
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_SHIFT, 'm4-chain-2'))
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_SHIFT, '# quota helpers\ndef quota():\n    return 0\n', 'm4-chain-3'))
+        self.s.increment(self.r['id'], t2['id'])
+        self.s.increment(self.r['id'], t3['id'])
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_PREDECESSOR_REQUIRED'):
+            self.s.rereview(self.r['id'], self.t1['id'])
+        r = self.s.rereview(self.r['id'], t2['id'])
+        self.assertEqual(r['rereviews'][-1]['old_task_id'], self.t1['id'])
+        self.assertEqual(r['rereviews'][-1]['comments'][0]['new']['line'], 3)
+        r = self.s.rereview(self.r['id'], t3['id'])
+        row = r['rereviews'][-1]['comments'][0]
+        self.assertEqual((row['old']['commit_id'], row['old']['line'], row['status']), (H2, 3, 'OUTDATED'))
+        self.assertEqual(first['payload']['commit_id'], H1)
+
+    def test_import_refuses_unfinished_task_without_leaving_a_row(self):
+        other = Store(self.root / 'provider-running')
+        t = offline_task(other, snapshot(B, H1, BASE, V1, 'm4-running'))
+        with other.transaction() as db:
+            doc = json.loads(db.execute('SELECT doc FROM tasks WHERE id=?', (t['id'],)).fetchone()[0])
+            doc['status'] = 'RUNNING'
+            db.execute('UPDATE tasks SET doc=? WHERE id=?', (json.dumps(doc), t['id']))
+        target = Store(self.root / 'imported-running')
+        with self.assertRaisesRegex(ValueError, 'COMPLETED_REVIEW_REQUIRED'):
+            import_task(target, other, t['id'])
+        with target.connection() as db:
+            self.assertIsNone(db.execute('SELECT 1 FROM tasks WHERE id=?', (t['id'],)).fetchone())
+
+    def test_cli_recovers_interrupted_intent_and_abandons_not_sent(self):
+        p = self.approve()
+        class Stop(BaseException):
+            pass
+        def crash(stage, _):
+            if stage == 'after_intent':
+                raise Stop()
+        with self.assertRaises(Stop):
+            Publisher(self.s, fault=crash).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        base = ['--store', str(self.root / 'review'), '--allow-repository', REPO]
+        out = self.root / 'status.json'
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(cli(base + ['--out', str(out), 'status', '--review', self.r['id']]), 0)
+        send = json.loads(out.read_bytes())['sends'][0]
+        self.assertEqual(send['status'], 'NOT_SENT')
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(cli(base + ['abandon-not-sent', '--intent', send['id']]), 2)
+            self.assertEqual(cli(base + ['abandon-not-sent', '--intent', send['id'], '--human-approved']), 0)
+        with self.store.connection() as db:
+            self.assertEqual(get(db, self.d['id'])['status'], 'DRAFT')
+        self.assertEqual(self.posts(), 0)
+
+
 class AnchorMappingTests(unittest.TestCase):
     def test_line_mapping_through_hunks(self):
         patch_text = diff('a\nb\nc\nd\ne\nf\n', 'x\na\nb\nC\nd\nf\n')
@@ -402,6 +504,22 @@ class AnchorMappingTests(unittest.TestCase):
         result = rereview.check(old, new, [send])
         self.assertEqual(result['comments'][0]['status'], 'CURRENT')
         self.assertEqual([c['status'] for c in result['candidates']], ['DUPLICATE_OF_SENT_COMMENT', 'NEW'])
+
+    def view_check(self, files, complete=True):
+        old = dict(view=dict(revisions=dict(head=H1), files=[]), candidates=[])
+        new = dict(view=dict(revisions=dict(base=H1, head=H2), files=files, coverage=dict(complete_listing=complete)), candidates=[])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        return rereview.check(old, new, [send])['comments'][0]
+
+    def test_copies_incomplete_listings_and_missing_sources_are_not_guessed(self):
+        copy_entry = dict(path='b.py', base_path='a.py', status='copied', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(head=dict()))
+        self.assertEqual(self.view_check([copy_entry])['status'], 'CURRENT')
+        self.assertEqual(self.view_check([], complete=False)['status'], 'NEEDS_RECHECK')
+        missing = dict(path='a.py', base_path='a.py', status='modified', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(base=dict()))
+        self.assertEqual(self.view_check([missing])['status'], 'NEEDS_RECHECK')
+        removed = dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))
+        self.assertEqual(self.view_check([removed])['status'], 'OUTDATED')
 
     def test_commentable_lines_cover_every_hunk_row(self):
         self.assertEqual(commentable_lines(diff(BASE, V2_REPLACE)), dict(RIGHT=[1, 2, 3], LEFT=[1, 2]))

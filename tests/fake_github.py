@@ -20,6 +20,7 @@ class FakeGitHub:
         self.login, self.state, self.pull_permission = login, 'open', True
         self.comments, self.posts, self.requests = [], [], []
         self.fault = None
+        self.merge_base = None
         self.page_size = 100
         self.lock = threading.Lock()
         self.auth_seen = set()
@@ -98,6 +99,8 @@ class FakeGitHub:
                 return 200, dict(login=self.login), 0
             if method == 'GET' and path == f'{base}/pulls/{self.number}':
                 return 200, dict(number=self.number, state=self.state, head=dict(sha=self.head), base=dict(sha=self.base)), 0
+            if method == 'GET' and path == f'{base}/compare/{self.base}...{self.head}':
+                return 200, dict(merge_base_commit=dict(sha=self.merge_base or self.base)), 0
             if method == 'GET' and path == f'{base}/pulls/{self.number}/files':
                 rows = [dict(filename=p, patch=t) for p, t in sorted(self.patches.items())]
                 return 200, rows[(page - 1) * 100:page * 100], 0

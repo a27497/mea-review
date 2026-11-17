@@ -59,31 +59,48 @@ def map_line(patch, line):
     return 'CURRENT', line + delta, None
 
 
-def check(old, new, sends, observed=None):
+def check(old, new, sends, observed=None, prior=()):
     ov, nv = old['view'], new['view']
     old_head, new_head = ov['revisions']['head'], nv['revisions']['head']
     relation = 'INCREMENTAL_LINEAR' if nv['revisions']['base'] == old_head and new_head != old_head else 'NOT_INCREMENTAL'
     remote = {c['id']: c for c in (observed or {}).get('comments', [])}
+    complete = (nv.get('coverage') or {}).get('complete_listing') is True
+    # Latest earlier result per send: a later increment starts from that mapped anchor.
+    last = {}
+    for earlier in prior:
+        for row in earlier['comments']:
+            last[row['send_id']] = row
     comments = []
     for s in sends:
         if s['status'] not in SENT or not s.get('remote_comment'):
             continue
-        p, c = s['payload'], s['remote_comment']
+        c = s['remote_comment']
+        p = s['payload']
+        before = last.get(s['id'])
+        if before and before['status'] == 'CURRENT' and before['new']:
+            p = dict(before['new'])
         row = dict(send_id=s['id'], comment_id=c['id'], html_url=c['html_url'],
                    old=dict(commit_id=p['commit_id'], path=p['path'], line=p['line'], side=p['side']),
                    new=None, status='NEEDS_RECHECK', replaced_head_lines=None, republish='NEVER_AUTOMATIC', reason=None)
-        if relation != 'INCREMENTAL_LINEAR' or p['commit_id'] != old_head:
+        if before and before['status'] != 'CURRENT':
+            row.update(status=before['status'], reason='Carried from the earlier re-review of ' + before['old']['commit_id'][:12] + '.')
+        elif relation != 'INCREMENTAL_LINEAR' or p['commit_id'] != old_head:
             row['reason'] = 'Comment commit is not the base of a linear increment; manual recheck.'
         elif p['side'] == 'LEFT':
             row.update(status='CURRENT', new=dict(commit_id=new_head, path=p['path'], line=p['line'], side='LEFT'),
                        reason='Base-side line; the increment does not change the merge base.')
         else:
-            f = next((f for f in nv['files'] if f['base_path'] == p['path'] and f['status'] != 'context'), None)
-            if f is None:
+            # A copy leaves the original file in place, so only renames and edits move the anchor.
+            f = next((f for f in nv['files'] if f['base_path'] == p['path'] and f['status'] not in ('context', 'copied')), None)
+            if f is None and not complete:
+                row['reason'] = 'Increment file listing is incomplete; absence does not prove the file is unchanged.'
+            elif f is None:
                 row.update(status='CURRENT', new=dict(commit_id=new_head, path=p['path'], line=p['line'], side='RIGHT'),
                            reason='File unchanged in the increment.')
-            elif f['status'] == 'removed' or 'head' not in f['sides']:
+            elif f['status'] == 'removed':
                 row.update(status='OUTDATED', reason='File removed in the increment.')
+            elif 'head' not in f['sides']:
+                row['reason'] = 'Head source missing from the increment capture; manual recheck.'
             elif not f['patch']:
                 row['reason'] = 'Increment patch missing or truncated; manual recheck.'
             else:

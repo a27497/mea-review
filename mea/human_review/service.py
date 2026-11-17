@@ -72,11 +72,7 @@ class Service:
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         c=next((c for c in t['candidates'] if c['id']==candidate_id),None)
         if not c:raise ValueError('CANDIDATE_NOT_FOUND')
-        for check in review.get('rereviews',[]):
-            row=next((x for x in check['candidates'] if check['new_task_id']==task_id and x['candidate_id']==candidate_id),None)
-            # An outdated comment is never relocated, and a sent comment is never repeated.
-            if row and row['status']=='DUPLICATE_OF_SENT_COMMENT':raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
-            if row and row['status']=='AT_OUTDATED_COMMENT_LOCATION':raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+        self.rereview_block(review,task_id,candidate_id)
         value=record('draft',dict(review_id=review_id,task_id=task_id,candidate_id=candidate_id),review_id=review_id,task_id=task_id,candidate_id=candidate_id,revision=1,history=[],status='DRAFT',confirmation=None,anchor=copy.deepcopy(c['change']),body=f'{c["title"]}\n\nTrigger: {c["trigger"]}\nImpact: {c["impact"]}\n\nConditional inference; correctness UNADJUDICATED.',source_kind=t['mode'])
         with self.store.transaction() as db:
             try:return get(db,value['id'],'draft')
@@ -97,25 +93,37 @@ class Service:
             self.payload(d);event(d,'edited','Final text or anchor changed; previous confirmation invalidated.');put(db,d)
         return d
 
+    @staticmethod
+    def rereview_block(review,task_id,candidate_id):
+        # An outdated comment is never relocated, and a sent comment is never repeated.
+        for check in review.get('rereviews',[]):
+            row=next((x for x in check['candidates'] if check['new_task_id']==task_id and x['candidate_id']==candidate_id),None)
+            if row and row['status']=='DUPLICATE_OF_SENT_COMMENT':raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
+            if row and row['status']=='AT_OUTDATED_COMMENT_LOCATION':raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+
     def payload(self,d):
         t,v=task_checked(self.store,d['task_id'])
+        with self.store.connection() as db:review=get(db,d['review_id'],'review')
+        # Checked on every preview, confirmation and send, not only when a draft is created.
+        self.rereview_block(review,d['task_id'],d['candidate_id'])
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         candidate=next((c for c in t['candidates'] if c['id']==d['candidate_id']),None)
         if not candidate:raise ValueError('CANDIDATE_NOT_FOUND')
         a=d['anchor'];fields(a,'path side line revision')
-        if a['side']=='base' and self.incremental(d):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')
+        if a['side']=='base' and self.incremental(review,d['task_id']):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')
         if a['side'] not in {'head','base'} or type(a['line']) is not int or a['revision']!=v.value['revisions'][a['side']] or (a['side'],a['path'],a['line']) not in v.changes:raise ValueError('COMMENT_DIFF_ANCHOR_INVALID')
         citation=v.citation(a['side'],a['path'],a['line'])
         if citation not in candidate['citations']:raise ValueError('COMMENT_ANCHOR_NOT_CANDIDATE_EVIDENCE')
         file=next(f for f in v.value['files'] if f['path' if a['side']=='head' else 'base_path']==a['path'])
         target=dict(repository=t['pr']['repository'],number=t['pr']['number'])
-        return dict(target=target,mock_admitted=demo.registered(t),pr_url=t['pr']['url'],view_sha256=v.sha256,task_id=t['id'],draft_revision=d['revision'],evidence=citation,
+        return dict(target=target,mock_admitted=demo.registered(t),pr_url=t['pr']['url'],view_sha256=v.sha256,task_id=t['id'],draft_revision=d['revision'],evidence=citation,base_revision=v.value['revisions']['base'],
                     payload=dict(commit_id=v.value['revisions']['head'],path=file['path'],line=a['line'],side='RIGHT' if a['side']=='head' else 'LEFT',body=d['body']))
 
-    def incremental(self,d):
+    @staticmethod
+    def incremental(review,task_id):
         # The base side of an increment snapshot is the previous head, not the PR merge base.
-        with self.store.connection() as db:r=get(db,d['review_id'],'review')
-        versions=r['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==d['task_id'])
+        # The live remote also checks LEFT anchors against GitHub's merge base (admit_remote).
+        versions=review['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==task_id)
         return index>0 and versions[index]['revisions']['base']==versions[index-1]['revisions']['head']
 
     def remote_identity(self,remote):
@@ -158,6 +166,8 @@ class Service:
         # Idempotency: our own principal never comments twice on one anchor. Other reviewers' comments do not block.
         if any(c.get('user',{}).get('login')==remote['principal'] and all(c.get(k)==value['payload'][k] for k in ['commit_id','path','line','side']) for c in remote['comments']):raise ValueError('DUPLICATE_REMOTE_ANCHOR')
         p=value['payload']
+        # LEFT means the PR merge base on GitHub; refuse when the frozen base side is another commit (an increment).
+        if p['side']=='LEFT' and 'merge_base' in remote and value['base_revision']!=remote['merge_base']:raise ValueError('LEFT_SIDE_BASE_MISMATCH')
         if 'commentable' in remote and p['line'] not in remote['commentable'].get(p['path'],{}).get(p['side'],[]):raise ValueError('REMOTE_DIFF_ANCHOR_INVALID')
 
     def decline(self,identifier,reference):
@@ -235,9 +245,12 @@ class Service:
                     done['observed_remote']=True
                     event(r,'remote_reobserved','Read-only remote comment state refreshed for an existing re-review.',new_task_id=new_task_id);put(db,r)
             else:
-                old_id=r['versions'][-2]['task_id'];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
+                ids=[v['task_id'] for v in r['versions']];index=ids.index(new_task_id)
+                if index==0:raise ValueError('REREVIEW_PREDECESSOR_REQUIRED')
+                old_id=ids[index-1];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
                 sends=rows(db,'send',review_id)
-                result=rereview.check(old,new,sends,observed)
+                prior=[x for x in r.get('rereviews',[]) if x['new_task_id'] in ids[:index]]
+                result=rereview.check(old,new,sends,observed,prior)
                 r.setdefault('rereviews',[]).append(dict(old_task_id=old_id,new_task_id=new_task_id,**result))
                 event(r,'incremental_rereview','Sent comment anchors checked against the increment; outdated comments are not re-posted at a new location.',new_task_id=new_task_id)
                 put(db,r)

@@ -197,15 +197,20 @@ class LiveGitHub:
             if len(rows) < 100:
                 complete = True
                 break
+        compare = self._json(f'{base}/compare/{base_sha}...{head}')
+        try:
+            merge_base = compare['merge_base_commit']['sha']
+        except (KeyError, TypeError):
+            raise ValueError('REMOTE_READ_MALFORMED') from None
         can_read = perms.get('pull') is True
-        value = dict(identity=dict(repository=target['repository'], number=target['number']), head=head, base=base_sha, state=state,
+        value = dict(identity=dict(repository=target['repository'], number=target['number']), head=head, base=base_sha, merge_base=merge_base, state=state,
                      can_comment=can_read and state == 'open', can_read=can_read, principal=principal,
                      private=repo.get('private') is True, complete_listing=complete, comments=comments,
                      commentable=commentable, commentable_complete=files_complete)
         value['generation'] = digest({k: value[k] for k in ['identity', 'head', 'base', 'state', 'can_comment', 'principal']})
         return value
 
-    def post(self, target, payload, expected_generation):
+    def post(self, target, payload, expected_generation, others=None):
         """One POST after a fresh read-only admission. NotSent before the POST; typed outcome after."""
         self.last_receipt = None
         wire = github_contract.comment_request(target, payload)
@@ -220,6 +225,10 @@ class LiveGitHub:
         if any(c['user']['login'] == remote['principal'] and c['commit_id'] == payload['commit_id'] and c['path'] == payload['path']
                and c['line'] == payload['line'] and c['side'] == payload['side'] for c in remote['comments']):
             raise NotSent('DUPLICATE_REMOTE_ANCHOR')
+        seen = sorted(c['id'] for c in remote['comments'] if c['user']['login'] != remote['principal'] and c['commit_id'] == payload['commit_id']
+                      and c['path'] == payload['path'] and c['line'] == payload['line'] and c['side'] == payload['side'])
+        if others is None or seen != sorted(others):
+            raise NotSent('OTHER_COMMENTS_AT_ANCHOR_CHANGED')
         if payload['line'] not in remote['commentable'].get(payload['path'], {}).get(payload['side'], []):
             raise NotSent('REMOTE_DIFF_ANCHOR_INVALID')
         try:
@@ -266,13 +275,21 @@ def import_task(store, source, identifier):
         row = db.execute('SELECT id, identity, doc FROM tasks WHERE id=?', (identifier,)).fetchone()
     if not row:
         raise ValueError('TASK_NOT_FOUND')
+    if json.loads(row[2]).get('status') != 'COMPLETED':
+        raise ValueError('COMPLETED_REVIEW_REQUIRED')  # A running task would change after import.
     with store.transaction() as db:
         existing = db.execute('SELECT doc FROM tasks WHERE id=?', (identifier,)).fetchone()
         if existing and existing[0] != row[2]:
             raise ValueError('TASK_IMPORT_CONFLICT')
         if not existing:
             db.execute('INSERT INTO tasks VALUES (?,?,?)', row)
-    task, _ = task_checked(store, identifier)
+    try:
+        task, _ = task_checked(store, identifier)
+    except ValueError:
+        if not existing:
+            with store.transaction() as db:
+                db.execute('DELETE FROM tasks WHERE id=? AND doc=?', (identifier, row[2]))
+        raise
     return task
 
 
@@ -300,6 +317,7 @@ def main(argv=None):
     p = sub.add_parser('decline'); p.add_argument('--draft', required=True); p.add_argument('--approval-ref', required=True)
     p = sub.add_parser('send'); p.add_argument('--draft', required=True); p.add_argument('--confirm-live-write', action='store_true')
     p = sub.add_parser('reconcile'); p.add_argument('--intent', required=True)
+    p = sub.add_parser('abandon-not-sent'); p.add_argument('--intent', required=True); p.add_argument('--human-approved', action='store_true')
     p = sub.add_parser('release-after-reconcile'); p.add_argument('--intent', required=True); p.add_argument('--human-approved', action='store_true')
     p = sub.add_parser('read'); p.add_argument('--repository', required=True); p.add_argument('--pr', type=int, required=True)
     p = sub.add_parser('rereview'); p.add_argument('--review', required=True); p.add_argument('--task-id', required=True)
@@ -309,7 +327,7 @@ def main(argv=None):
     if args.command == 'send' and not args.confirm_live_write:
         print('BLOCKED: --confirm-live-write is required for a GitHub write.', flush=True)
         return 2
-    if args.command in ('confirm', 'release-after-reconcile') and not args.human_approved:
+    if args.command in ('confirm', 'release-after-reconcile', 'abandon-not-sent') and not args.human_approved:
         print('BLOCKED: --human-approved is required and must reflect a recorded human decision.', flush=True)
         return 2
     store = Store(args.store)
@@ -324,6 +342,8 @@ def main(argv=None):
             remote = LiveGitHub(Transport(secret), args.allow_repository)
             del secret
         service = Service(store, remote) if remote else Service(store)
+        # Interrupted intents become NOT_SENT (PREPARED) or UNCERTAIN (SENDING) before anything else; nothing is sent.
+        service.recover()
         if args.command == 'import-task':
             t = import_task(store, Store(args.from_store), args.task_id)
             result = dict(task_id=t['id'], status=t['status'], reason=t['reason'], candidates=len(t['candidates']), pr=t['pr']['url'],
@@ -363,6 +383,9 @@ def main(argv=None):
         elif args.command == 'reconcile':
             s = Publisher(service).reconcile(args.intent)
             result = dict(intent_id=s['id'], status=s['status'], comment=s.get('remote_comment'), events=s['events'])
+        elif args.command == 'abandon-not-sent':
+            d = Publisher(service).abandon_not_sent(args.intent, True)
+            result = dict(draft_id=d['id'], status=d['status'])
         elif args.command == 'release-after-reconcile':
             d = Publisher(service).release_after_reconcile(args.intent, True)
             result = dict(draft_id=d['id'], status=d['status'])

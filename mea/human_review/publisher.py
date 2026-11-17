@@ -58,7 +58,11 @@ class Publisher:
                 current['status']='SENDING';event(current,'sending','Request may have a remote effect; HTTP failure would not prove absence.');put(db,current)
             self.fault('after_sending',current)
             try:
-                comment=self.remote.post(current['target'],copy.deepcopy(current['payload']),current['remote_snapshot']['generation'])
+                if self.service.live:
+                    # The other-account comments the human saw at this anchor must still be exactly those.
+                    others=[c['id'] for c in current['approved_snapshot'].get('other_comments_at_anchor',[])]
+                    comment=self.remote.post(current['target'],copy.deepcopy(current['payload']),current['remote_snapshot']['generation'],others=others)
+                else:comment=self.remote.post(current['target'],copy.deepcopy(current['payload']),current['remote_snapshot']['generation'])
                 self.validate_comment(comment,current)
                 self.fault('after_remote',current)
             except NotSent as exc:
@@ -108,7 +112,7 @@ class Publisher:
         if human_confirmed is not True:raise ValueError('EXPLICIT_HUMAN_CONFIRMATION_REQUIRED')
         with self.store.launch_lock(),self.store.transaction() as db:
             intent=get(db,identifier,'send')
-            if intent['status']!='UNCERTAIN' or not intent.get('reconciled_absent'):raise ValueError('RECONCILED_ABSENCE_REQUIRED')
+            if intent['status']!='UNCERTAIN' or intent.get('last_reconcile')!='ABSENT':raise ValueError('RECONCILED_ABSENCE_REQUIRED')
             intent['status']='RELEASED_AFTER_RECONCILE';event(intent,'released','User released the slot after a complete listing showed no matching comment. Absence is evidence, not proof.');put(db,intent)
             db.execute('delete from human_send_slots where intent_id=?',(identifier,))
             d=get(db,intent['draft_id'],'draft')
@@ -139,6 +143,8 @@ class Publisher:
                 else:
                     intent['status']='UNCERTAIN'
                     if not matches:intent['reconciled_absent']=intent.get('reconciled_absent',0)+1
+                    # Release is allowed only when the latest complete listing showed no match.
+                    intent['last_reconcile']='ABSENT' if not matches else 'MULTIPLE'
                     event(intent,'manual_handling_required','No unique complete remote match ('+str(len(matches))+' found). Absence does not prove the request had no effect.',matches=len(matches))
                 put(db,intent);d=get(db,intent['draft_id'],'draft');d['status']=intent['status'];put(db,d)
             return intent

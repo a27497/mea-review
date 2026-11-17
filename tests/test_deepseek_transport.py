@@ -17,7 +17,8 @@ from mea.investigation.real import Coordinator, create
 from mea.investigation.tasks import Store, TERMINAL
 from test_cross_file_tools import value
 
-SECRET = 'sk-' + 'a' * 32
+# A dummy value shaped like a DeepSeek key; never a real credential.
+DUMMY = 'sk-' + 'a' * 32
 
 
 def completion(calls, usage=None, status=200, model=p.MODEL, finish='tool_calls'):
@@ -88,7 +89,7 @@ class LiveLaneTests(unittest.TestCase):
         coordinator = Coordinator(store, self.lane)
         coordinator.boot()
         self.conn = FakeConnection(plan)
-        sender = deepseek.Sender(SECRET, connect=self.conn.factory)
+        sender = deepseek.Sender(DUMMY, connect=self.conn.factory)
         broker = Broker(store, sender=sender, lane=self.lane)
         try:
             task = create(store, self.input, budget=self.lane.scope['task_budget'], lane=self.lane, confirmed=True,
@@ -123,7 +124,7 @@ class LiveLaneTests(unittest.TestCase):
         self.assertEqual(len(posts), 3)
         for post, request in zip(posts, task['requests']):
             self.assertEqual((post['method'], post['path'], post['host'], post['port']), ('POST', '/chat/completions', 'api.deepseek.com', 443))
-            self.assertEqual(post['headers']['Authorization'], 'Bearer ' + SECRET)
+            self.assertEqual(post['headers']['Authorization'], 'Bearer ' + DUMMY)
             self.assertEqual(post['body'], canonical(request['request_body']))
             body = json.loads(post['body'])
             self.assertEqual(body['tools'], native.definitions(native.CROSS_FILE))
@@ -131,7 +132,7 @@ class LiveLaneTests(unittest.TestCase):
             self.assertIn('cross-file tool profile', body['messages'][0]['content'])
             self.assertEqual(request['receipt']['request_id'], 'req-123')
             self.assertEqual(request['cost_source'], 'PROVIDER_USAGE_AT_OFFICIAL_PRICE')
-        self.assertNotIn(SECRET, json.dumps(task))
+        self.assertNotIn(DUMMY, json.dumps(task))
         with store.connection() as db:
             ledger = spending.LIVE.summary(db)
             with self.assertRaisesRegex(ValueError, 'SHARED_BUDGET_NOT_INITIALIZED'):
@@ -143,7 +144,7 @@ class LiveLaneTests(unittest.TestCase):
             self.assertEqual(entry['estimated_nano_usd'], expected)
             self.assertEqual(entry['scheduled_nano_usd'], expected[entry['price_tier']])
             self.assertEqual(entry['accounted_nano_usd'], expected['peak'])
-        self.assertNotIn(SECRET, json.dumps(ledger))
+        self.assertNotIn(DUMMY, json.dumps(ledger))
         result = live_run.summary(task, ledger)
         self.assertEqual([t['tool'] for t in result['tool_sequence']], ['related_files', 'read_diff', 'read_source'])
 
@@ -182,9 +183,9 @@ class LiveLaneTests(unittest.TestCase):
     def test_model_identity_and_secret_echo_are_handled(self):
         store, task = self.start(lambda body: completion([], model='other-model', finish='stop'))
         self.assertEqual((task['status'], task['reason']), ('STOPPED', 'PROVIDER_MODEL_MISMATCH'))
-        store, task = self.start(lambda body: (400, json.dumps(dict(error='bad key ' + SECRET)).encode()), 'second')
+        store, task = self.start(lambda body: (400, json.dumps(dict(error='bad key ' + DUMMY)).encode()), 'second')
         self.assertEqual((task['status'], task['reason']), ('STOPPED', 'PROVIDER_HTTP_ERROR'))
-        self.assertNotIn(SECRET, json.dumps(task))
+        self.assertNotIn(DUMMY, json.dumps(task))
 
     def test_request_usd_cap_blocks_before_any_post(self):
         with patch.object(spending.LIVE, 'request_cap', 1):
@@ -197,7 +198,7 @@ class LiveLaneTests(unittest.TestCase):
         other['pr']['title'] = 'Different input'
         store = Store(Path(self.temp.name) / 'scope')
         Coordinator(store, self.lane).boot()
-        broker = Broker(store, sender=deepseek.Sender(SECRET), lane=self.lane)
+        broker = Broker(store, sender=deepseek.Sender(DUMMY), lane=self.lane)
         self.addCleanup(lambda: broker.lease.closed or broker.close())
         budget = self.lane.scope['task_budget']
         with self.assertRaisesRegex(ValueError, 'LIVE_AUTHORIZATION_SCOPE_MISMATCH'):
@@ -232,15 +233,19 @@ class CredentialTests(unittest.TestCase):
         self.path = Path(self.temp.name) / 'deepseek.env'
 
     def write(self, text, mode=0o600):
-        self.path.write_text(text)
+        if self.path.exists():
+            self.path.unlink()
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as handle:
+            handle.write(text)
         os.chmod(self.path, mode)
 
     def test_reads_only_a_private_owner_file(self):
-        self.write('# comment\nDEEPSEEK_API_KEY=' + SECRET + '\n')
-        self.assertEqual(deepseek.read_key(self.path), SECRET)
-        self.write('export DEEPSEEK_API_KEY="' + SECRET + '"\n')
-        self.assertEqual(deepseek.read_key(self.path), SECRET)
-        for text, mode, code in [('DEEPSEEK_API_KEY=' + SECRET, 0o644, 'CREDENTIAL_FILE_PERMISSIONS'),
+        self.write('# comment\nDEEPSEEK_API_KEY=' + DUMMY + '\n')
+        self.assertEqual(deepseek.read_key(self.path), DUMMY)
+        self.write('export DEEPSEEK_API_KEY="' + DUMMY + '"\n')
+        self.assertEqual(deepseek.read_key(self.path), DUMMY)
+        for text, mode, code in [('DEEPSEEK_API_KEY=' + DUMMY, 0o644, 'CREDENTIAL_FILE_PERMISSIONS'),
                                  ('DEEPSEEK_API_KEY=\n', 0o600, 'CREDENTIAL_EMPTY'),
                                  ('OTHER=1\n', 0o600, 'CREDENTIAL_EMPTY'),
                                  ('DEEPSEEK_API_KEY=a b\n', 0o600, 'CREDENTIAL_FORMAT')]:
@@ -248,7 +253,7 @@ class CredentialTests(unittest.TestCase):
             with self.assertRaises(ValueError) as raised:
                 deepseek.read_key(self.path)
             self.assertEqual(str(raised.exception), code)
-            self.assertNotIn(SECRET, str(raised.exception))
+            self.assertNotIn(DUMMY, str(raised.exception))
         with self.assertRaisesRegex(ValueError, 'CREDENTIAL_FILE_MISSING'):
             deepseek.read_key(Path(self.temp.name) / 'absent')
 
@@ -271,7 +276,7 @@ class CredentialTests(unittest.TestCase):
 
     def test_sender_requires_a_task_validator(self):
         with self.assertRaisesRegex(ValueError, 'LIVE_VALIDATOR_REQUIRED'):
-            deepseek.Sender(SECRET).start({})
+            deepseek.Sender(DUMMY).start({})
 
 
 if __name__ == '__main__':

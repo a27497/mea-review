@@ -212,6 +212,11 @@ Collected files include changed files and unchanged context files (changed=false
 name matches and tests. related_files lists import edges between collected files with cited import lines.
 find_symbol and references also cover JavaScript/TypeScript by lexical matching, which can include comments and strings.
 Context files have no diff: anchor every candidate on a changed line, and cite context lines as supporting evidence.
+When the host sets finish_only, only finish_investigation is available. Report supported candidates with exact
+visible evidence IDs, or give the honest reason to abstain.
+Source and test reads return at most 80 whole lines per page. PAGE_LIMIT and BYTE_LIMIT carry a continuation;
+follow it only when the next lines are needed for a specific claim.
+A response holds at most 1600 output tokens. Keep each summary, trigger and impact under 600 characters.
 '''
 
 
@@ -369,11 +374,17 @@ def prepare_request(task):
                                 or context['remaining']['tokens']<=40000
                                 or task['budget']['output_bytes']-task['usage'].get('output_bytes',0)<=40000)
         if context['finish_only']:tools=terminal_tools()
+    elif tools_profile:
+        # The cross-file profile reserves its last request for a conclusion instead of a budget stop.
+        context['finish_only']=(context['remaining']['requests']<=1 or context['remaining']['tools']<=0
+                                or task['budget']['output_bytes']-task['usage'].get('output_bytes',0)<=60000)
+        if context['finish_only']:tools=terminal_tools(tools_profile)
+    tool_choice=FINISH_CHOICE if tools_profile and context.get('finish_only') else 'required'
     cfg=window.config(task['identity'].get('context_policy',{}).get('limits'))
     cfg['serialized_bytes']=min(cfg['serialized_bytes'],INPUT_BYTES)
     body,reservation,manifest=window.project(context,batches,
         dict(model=MODEL,thinking=dict(type='disabled'),temperature=0,max_tokens=OUTPUT_TOKENS,stream=False,
-             tools=tools,tool_choice='required',_prompt=task_prompt(task)),cfg,
+             tools=tools,tool_choice=tool_choice,_prompt=task_prompt(task)),cfg,
         context['remaining']['tokens'],OUTPUT_TOKENS,window.estimator_of(task))
     manifest['journal_requests']=[dict(id=r['id'],request_body_sha256=r['request_body_sha256'],
         result_sha256s=r['result_sha256s'],tool_message_sha256s=[digest(m) for m in r['tool_messages']]) for r in task['requests']]
@@ -386,6 +397,10 @@ def request(task):
     return body,reservation
 
 
+# Named choice for the cross-file profile's finish-only request (non-thinking mode only).
+FINISH_CHOICE=dict(type='function',function=dict(name=native.FINISH))
+
+
 def validate_task_request(body,task):
     """validate_request with the prompt and profiles the task itself selected."""
     validate_request(body,prompt=task_prompt(task),estimator=window.estimator_of(task),profile=first_turn(task),tool_profile=tool_profile(task))
@@ -394,7 +409,8 @@ def validate_task_request(body,task):
 def validate_request(body,*,prompt=PROMPT,estimator=window.ESTIMATOR,profile=None,tool_profile=None):
     if (not isinstance(body,dict) or set(body)!={'model','thinking','temperature','max_tokens','stream','tools','tool_choice','messages'} or
         body['model']!=MODEL or body['max_tokens']!=OUTPUT_TOKENS or body['stream'] is not False or body['temperature']!=0 or
-        body['thinking']!={'type':'disabled'} or body['tool_choice']!='required'):
+        body['thinking']!={'type':'disabled'} or body['tool_choice'] not in ('required',FINISH_CHOICE)
+        or (body['tool_choice']==FINISH_CHOICE and tool_profile is None)):
         raise ValueError('REQUEST_BOUND')
     parameters=native.parameters(tool_profile)
     native.validate_messages(body['messages'],prompt,parameters)
@@ -414,6 +430,10 @@ def validate_request(body,*,prompt=PROMPT,estimator=window.ESTIMATOR,profile=Non
     if prompt==C1_BOUNDED_PROMPT:
         if type(ctx.get('finish_only')) is not bool:raise ValueError('C1_FINISH_MODE_REQUIRED')
         if ctx['finish_only']:expected_tools=terminal_tools()
+    elif tool_profile is not None:
+        if type(ctx.get('finish_only')) is not bool:raise ValueError('FINISH_MODE_REQUIRED')
+        if ctx['finish_only']:expected_tools=terminal_tools(tool_profile)
+        if (body['tool_choice']==FINISH_CHOICE)!=ctx['finish_only']:raise ValueError('REQUEST_TOOL_CHOICE')
     if body['tools']!=expected_tools:raise ValueError('REQUEST_TOOL_SCHEMA')
     policy=ctx.get('context_policy')
     if not isinstance(policy,dict) or policy!=window.identity(policy.get('limits')):raise ValueError('CONTEXT_POLICY_MISMATCH')

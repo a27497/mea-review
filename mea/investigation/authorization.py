@@ -57,7 +57,7 @@ LIVE_MODE = 'REAL_PROVIDER_DEEPSEEK'
 LIVE_PREFIX = 'mea-live-'
 LIVE_MAX_TASKS = 8
 LIVE_MAX_REQUESTS = 48
-SCOPE_FIELDS = {'id', 'inputs', 'max_tasks', 'max_requests', 'tool_profile', 'first_turn', 'approval', 'budget_usd'}
+SCOPE_FIELDS = {'id', 'inputs', 'max_tasks', 'max_requests', 'tool_profile', 'first_turn', 'approval', 'budget_usd', 'task_budget'}
 
 
 class Lane:
@@ -98,7 +98,7 @@ class Lane:
                         protocol_version=scope['protocol_version'], tool_schema_sha256=scope['tool_schema_sha256'],
                         tool_version=scope['tool_version'])
         if self.mode != MODE:
-            expected.update(tool_profile=scope['tool_profile'], first_turn=scope['first_turn'])
+            expected.update(tool_profile=scope['tool_profile'], first_turn=scope['first_turn'], budget=scope['task_budget'])
         if (identity.get('authorization') != self.grant or identity.get('mode') != self.mode
                 or identity.get('input_sha256') not in scope['inputs']
                 or any(identity.get(k) != v for k, v in expected.items())):
@@ -127,6 +127,12 @@ def live(scope):
         raise ValueError('LIVE_SCOPE_BUDGET')
     if not isinstance(scope['approval'], str) or not 1 <= len(scope['approval']) <= 300:
         raise ValueError('LIVE_SCOPE_APPROVAL')
+    try:
+        task_budget = protocol.budget(scope['task_budget'])
+    except ValueError:
+        raise ValueError('LIVE_SCOPE_TASK_BUDGET') from None
+    if task_budget != scope['task_budget']:
+        raise ValueError('LIVE_SCOPE_TASK_BUDGET')
     from .provider_view import TOOL_VERSION as DEFAULT_TOOL_VERSION, CROSS_FILE_TOOL_VERSION
     full = dict(scope, mode=LIVE_MODE, model=protocol.MODEL, policy=protocol.POLICY,
                 protocol_version=native.version(scope['tool_profile']),

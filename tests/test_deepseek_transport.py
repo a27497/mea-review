@@ -68,7 +68,8 @@ class FakeConnection:
 
 def scope(inputs, **extra):
     return dict(dict(id='mea-live-test', inputs=inputs, max_tasks=1, max_requests=6, tool_profile=native.CROSS_FILE,
-                     first_turn=p.FIRST_TURN, approval='unit test, fake connection', budget_usd=1), **extra)
+                     first_turn=p.FIRST_TURN, approval='unit test, fake connection', budget_usd=1,
+                     task_budget=p.budget(dict(output_bytes=500000))), **extra)
 
 
 class LiveLaneTests(unittest.TestCase):
@@ -90,7 +91,8 @@ class LiveLaneTests(unittest.TestCase):
         sender = deepseek.Sender(SECRET, connect=self.conn.factory)
         broker = Broker(store, sender=sender, lane=self.lane)
         try:
-            task = create(store, self.input, lane=self.lane, confirmed=True, first_turn=p.FIRST_TURN, tool_profile=native.CROSS_FILE)
+            task = create(store, self.input, budget=self.lane.scope['task_budget'], lane=self.lane, confirmed=True,
+                          first_turn=p.FIRST_TURN, tool_profile=native.CROSS_FILE)
             sender.validate = lambda body: p.validate_task_request(body, task)
             return store, live_run.drive(store, coordinator, broker, task['id'])
         finally:
@@ -125,7 +127,7 @@ class LiveLaneTests(unittest.TestCase):
             self.assertEqual(post['body'], canonical(request['request_body']))
             body = json.loads(post['body'])
             self.assertEqual(body['tools'], native.definitions(native.CROSS_FILE))
-            self.assertEqual((body['model'], body['thinking'], body['tool_choice'], body['stream']), ('deepseek-flash', {'type': 'disabled'}, 'required', False))
+            self.assertEqual((body['model'], body['thinking'], body['stream']), ('deepseek-flash', {'type': 'disabled'}, False))
             self.assertIn('cross-file tool profile', body['messages'][0]['content'])
             self.assertEqual(request['receipt']['request_id'], 'req-123')
             self.assertEqual(request['cost_source'], 'PROVIDER_USAGE_AT_OFFICIAL_PRICE')
@@ -144,6 +146,22 @@ class LiveLaneTests(unittest.TestCase):
         self.assertNotIn(SECRET, json.dumps(ledger))
         result = live_run.summary(task, ledger)
         self.assertEqual([t['tool'] for t in result['tool_sequence']], ['related_files', 'read_diff', 'read_source'])
+
+    def test_last_request_is_finish_only_instead_of_a_budget_stop(self):
+        def plan(body):
+            names = [t['function']['name'] for t in body['tools']]
+            rev = json.loads(body['messages'][1]['content'])['revisions']['head']
+            if names == [native.FINISH]:
+                return completion([call('end', native.FINISH, reason='EVIDENCE_INSUFFICIENT', candidates=[])])
+            n = len(expanded_feedback(body)) + 1
+            return completion([call(f'c{n}', 'read_source', path='shop/cart.py', revision=rev, start=1, end=n)])
+        store, task = self.start(plan)
+        self.assertEqual((task['status'], task['reason']), ('COMPLETED', 'EVIDENCE_INSUFFICIENT'))
+        bodies = [json.loads(post['body']) for post in FakeConnection.posts]
+        self.assertEqual(len(bodies), 6)
+        self.assertEqual([json.loads(b['messages'][1]['content'])['finish_only'] for b in bodies], [False] * 5 + [True])
+        self.assertEqual(bodies[-1]['tools'], p.terminal_tools(native.CROSS_FILE))
+        self.assertEqual([b['tool_choice'] for b in bodies], ['required'] * 5 + [p.FINISH_CHOICE])
 
     def test_http_error_stops_without_retry(self):
         store, task = self.start(lambda body: (500, b'{"error":{"message":"server"}}'))
@@ -181,8 +199,11 @@ class LiveLaneTests(unittest.TestCase):
         Coordinator(store, self.lane).boot()
         broker = Broker(store, sender=deepseek.Sender(SECRET), lane=self.lane)
         self.addCleanup(lambda: broker.lease.closed or broker.close())
+        budget = self.lane.scope['task_budget']
         with self.assertRaisesRegex(ValueError, 'LIVE_AUTHORIZATION_SCOPE_MISMATCH'):
-            create(store, other, lane=self.lane, confirmed=True, first_turn=p.FIRST_TURN, tool_profile=native.CROSS_FILE)
+            create(store, other, budget=budget, lane=self.lane, confirmed=True, first_turn=p.FIRST_TURN, tool_profile=native.CROSS_FILE)
+        with self.assertRaisesRegex(ValueError, 'LIVE_AUTHORIZATION_SCOPE_MISMATCH'):
+            create(store, self.input, lane=self.lane, confirmed=True, first_turn=p.FIRST_TURN, tool_profile=native.CROSS_FILE)
         with self.assertRaisesRegex(ValueError, 'LIVE_AUTHORIZATION_SCOPE_MISMATCH'):
             create(store, self.input, lane=self.lane, confirmed=True)
         with self.assertRaisesRegex(ValueError, 'EXPLICIT_LIVE_START_REQUIRED'):
@@ -190,7 +211,8 @@ class LiveLaneTests(unittest.TestCase):
         good = scope([digest(self.input)])
         for change, code in [(dict(id='grant'), 'LIVE_SCOPE_ID'), (dict(budget_usd=31), 'LIVE_SCOPE_BUDGET'),
                              (dict(max_tasks=2), 'LIVE_SCOPE_CAPS'), (dict(max_requests=7), 'LIVE_SCOPE_CAPS'),
-                             (dict(tool_profile='x'), 'LIVE_SCOPE_PROFILE'), (dict(inputs=['x']), 'LIVE_SCOPE_INPUTS')]:
+                             (dict(tool_profile='x'), 'LIVE_SCOPE_PROFILE'), (dict(inputs=['x']), 'LIVE_SCOPE_INPUTS'),
+                             (dict(task_budget=dict(rounds=7)), 'LIVE_SCOPE_TASK_BUDGET'), (dict(task_budget=dict(rounds=6)), 'LIVE_SCOPE_TASK_BUDGET')]:
             with self.assertRaisesRegex(ValueError, code):
                 authorization.live(dict(good, **change))
         with self.assertRaisesRegex(ValueError, 'LIVE_SCOPE_FIELDS'):

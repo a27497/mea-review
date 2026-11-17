@@ -11,6 +11,12 @@ LIMITS = {key: value for key, value in LEGACY_LIMITS.items() if key != 'snippet_
 class View(LegacyView):
     tool_version = TOOL_VERSION
     limits = LIMITS
+    page_lines = None
+    stored_bytes = LIMITS['result_bytes']
+
+    @staticmethod
+    def page_bytes(value):
+        return len(canonical(value))
 
     def __init__(self, value):
         super().__init__(value)
@@ -41,7 +47,7 @@ class View(LegacyView):
 
         def result(status,unknown,returned_end=None):
             partial=status in {'BYTE_LIMIT','RESOURCE_INSUFFICIENT'}
-            next_start=returned_end+1 if status=='BYTE_LIMIT' else None
+            next_start=returned_end+1 if status in {'BYTE_LIMIT','PAGE_LIMIT'} else None
             read=dict(path=path,side=side,requested_start=start,requested_end=end,total_lines=total,
                       returned_start=start if refs else None,returned_end=returned_end,returned_lines=len(refs),
                       eof=None if total is None else (status in {'EMPTY_SOURCE','START_BEYOND_EOF'} or returned_end==total),
@@ -50,7 +56,7 @@ class View(LegacyView):
                       source_sha256=source['sha256'] if source else None,blob_sha=source['blob_sha'] if source else None)
             value=dict(tool=name,tool_version=self.tool_version,view_sha256=self.sha256,revision=args['revision'],
                        data=list(data),evidence=list(refs),read=read,unknown=unknown,coverage='COLLECTED_FILES_ONLY',
-                       truncated=partial,limits=LIMITS,notice=NOTICE)
+                       truncated=partial,limits=self.limits,notice=NOTICE)
             value['content_sha256']=digest(value)
             return value
 
@@ -62,10 +68,18 @@ class View(LegacyView):
             for n in range(start,last+1):
                 ref=self.citation(side,path,n)
                 refs.append(ref);data.append(dict(line=n,text=ref['quote']))
+                if self.page_lines and n<last and len(refs)>=self.page_lines:
+                    candidate=result('PAGE_LIMIT',[],n)
+                    if self.page_bytes(candidate)<=LIMITS['result_bytes'] and len(canonical(candidate))<=self.stored_bytes:
+                        page=candidate
+                    break
                 candidate=result('COMPLETE' if n==last else 'BYTE_LIMIT',[] if n==last else ['TOOL_OUTPUT_BYTE_BOUND'],n)
-                if len(canonical(candidate))>LIMITS['result_bytes']:break
+                if self.page_bytes(candidate)>LIMITS['result_bytes'] or len(canonical(candidate))>self.stored_bytes:
+                    refs.pop();data.pop()
+                    if refs:page=result('BYTE_LIMIT',['TOOL_OUTPUT_BYTE_BOUND'],refs[-1]['line'])
+                    break
                 page=candidate
-        if len(canonical(page))>LIMITS['result_bytes']:raise ValueError('TOOL_RESULT_METADATA_BYTE_BOUND')
+        if self.page_bytes(page)>LIMITS['result_bytes'] or len(canonical(page))>self.stored_bytes:raise ValueError('TOOL_RESULT_METADATA_BYTE_BOUND')
         return page
 
 
@@ -77,3 +91,15 @@ class CrossFileView(View):
     """
     tool_version = CROSS_FILE_TOOL_VERSION
     cross_file = True
+    # Source and test pages hold at most 80 lines. The 24000-byte bound counts what the
+    # model sees (line, evidence ID, quote and read metadata); the stored result keeps full
+    # citations and stays within four times that bound.
+    page_lines = 80
+    stored_bytes = 4 * LIMITS['result_bytes']
+    limits = dict(LIMITS, page_lines=80, stored_result_bytes=4 * LIMITS['result_bytes'], result_bytes_basis='MODEL_VISIBLE')
+
+    @staticmethod
+    def page_bytes(value):
+        visible = {k: v for k, v in value.items() if k not in ('data', 'evidence', 'limits', 'notice')}
+        visible['rows'] = [[e['line'], e['id'], e['quote']] for e in value['evidence']]
+        return len(canonical(visible))

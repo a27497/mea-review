@@ -215,17 +215,24 @@ def accepted(value):
         return None
 
 
+COMMON = {'read', 'write', 'close', 'open', 'init', 'main', 'test', 'tests', 'render', 'value', 'values', 'update',
+          'handle', 'handler', 'process', 'parse', 'node', 'self', 'start', 'stop', 'reset', 'setup', 'result',
+          'request', 'response', 'error', 'string', 'number', 'object', 'default', 'options', 'config', 'index'}
+
+
 def symbols(patch):
-    names = []
+    """Distinctive names defined on changed lines first, then enclosing hunk-header names."""
+    changed, enclosing = [], []
     for line in (patch or '').splitlines():
         header = line.startswith('@@')
-        text = line.split('@@', 2)[-1] if header else line
         if not header and not line.startswith(('+', '-')):
             continue
-        match = DEFINITION.search(text.strip() if header else text)
+        text = line.split('@@', 2)[-1].strip() if header else line
+        match = DEFINITION.search(text)
         if match:
-            names.append(match[1] or match[2])
-    return list(dict.fromkeys(n for n in names if not n.startswith('__') and n not in {'test', 'self'}))
+            (enclosing if header else changed).append(match[1] or match[2])
+    names = changed + [n for n in enclosing if len(n) >= 6]
+    return list(dict.fromkeys(n for n in names if len(n) >= 5 and not n.startswith('__') and n.lower() not in COMMON))
 
 
 def test_names(path):
@@ -246,7 +253,7 @@ def changed_words(patch):
     return set(re.findall(r'[A-Za-z_][A-Za-z0-9_]{2,79}', '\n'.join(rows)))
 
 
-def select_context(capture, files, tree, budget, head, owner, repo, limit):
+def select_context(capture, files, tree, budget, head, owner, repo, limit, pause=0):
     """Ordered (path, reason) context candidates.
 
     Priority: tests named after a changed module, files found by code search for a
@@ -273,7 +280,9 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit):
                 if name_matches(stem, path):
                     add('tests', path, f'TEST_NAME_MATCH:{f["path"]}')
     names = list(dict.fromkeys(n for f in files for n in symbols(f['patch'])))
-    for name in names[:SEARCHES]:
+    for i, name in enumerate(names[:SEARCHES]):
+        if i and pause:
+            time.sleep(pause)  # GitHub code search allows about 10 requests per minute.
         response, data = capture.json(f'/search/code?q={quote(name)}+repo:{owner}/{repo}&per_page=20',
                                       what='search', file=None, side='head')
         if data is None:
@@ -299,7 +308,7 @@ def select_context(capture, files, tree, budget, head, owner, repo, limit):
     return (picks + leftovers)[:limit * 2]
 
 
-def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None):
+def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None, search_pause=0):
     """Return (report, snapshot). snapshot is None when status is FAILED."""
     owner, repo, number, pin = parse_ref(reference)
     c = Capture(fetcher, owner, repo)
@@ -389,7 +398,7 @@ def capture(reference, fetcher, *, context_limit=CONTEXT_FILES, now=None):
         entries = [e for e in (tree or {}).get('tree', []) if isinstance(e, dict) and e.get('type') == 'blob']
         if tree and tree.get('truncated'):
             c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head')
-        picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit) if entries else []
+        picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit, search_pause) if entries else []
         blobs = {e['path']: e.get('sha') for e in entries}
         for path, reason in picks:
             if len(context) >= context_limit or len(files) + len(context) >= MAX_FILES:
@@ -470,7 +479,7 @@ def main(argv=None):
     parser.add_argument('--out-dir', type=Path, required=True)
     parser.add_argument('--context-files', type=int, default=CONTEXT_FILES)
     args = parser.parse_args(argv)
-    report, snapshot = capture(args.reference, RestFetcher(token()), context_limit=args.context_files)
+    report, snapshot = capture(args.reference, RestFetcher(token()), context_limit=args.context_files, search_pause=7)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / 'capture.json').write_bytes(canonical(report))
     if snapshot is not None:

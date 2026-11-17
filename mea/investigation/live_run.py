@@ -85,8 +85,8 @@ def main(argv=None):
     del secret
     broker = Broker(store, sender=sender, lane=lane)
     try:
-        task = create(store, snapshot, lane=lane, confirmed=True, first_turn=lane.scope['first_turn'],
-                      tool_profile=lane.scope['tool_profile'])
+        task = create(store, snapshot, budget=lane.scope['task_budget'], lane=lane, confirmed=True,
+                      first_turn=lane.scope['first_turn'], tool_profile=lane.scope['tool_profile'])
         sender.validate = lambda body: protocol.validate_task_request(body, task)
         if task['status'] in TERMINAL:
             print('EXISTING_TERMINAL_TASK ' + task['id'], flush=True)

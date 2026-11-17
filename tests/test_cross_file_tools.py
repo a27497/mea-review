@@ -1,7 +1,7 @@
 """Cross-file frozen tools: import edges, JS/TS symbols and reference validation. No network."""
 import unittest
 
-from mea.contract import validate
+from mea.contract import canonical, validate
 from mea.investigation import native, real_protocol as protocol
 from mea.investigation.provider_view import CrossFileView, View
 from mea.investigation.tools import View as LegacyView, import_edges
@@ -124,6 +124,30 @@ class CrossFileToolTests(unittest.TestCase):
             accepted, rejected = validate_candidates(self.view, [candidate([anchor['id'], fake['id']])], tampered, detailed=True)
             # A line outside the file or a quote that differs from the frozen line never validates.
             self.assertEqual((accepted, len(rejected)), ([], 1))
+
+    def test_cross_file_pages_hold_80_lines_on_the_model_visible_bound(self):
+        long = ''.join(f'value_{i} = compute({i}, "{"x" * 40}")\n' for i in range(1, 201))
+        files = [changed_file('shop/pricing.py', PRICING_BEFORE, PRICING_AFTER), context('shop/long.py', long)]
+        files[0]['status'] = 'modified'
+        data = snapshot(files)
+        head = data['revisions']['head']
+        cross = CrossFileView.from_input(data).execute('read_source', dict(path='shop/long.py', revision=head, start=1, end=200))
+        self.assertEqual((cross['read']['status'], cross['read']['returned_lines'], cross['read']['next_start']), ('PAGE_LIMIT', 80, 81))
+        self.assertEqual(cross['read']['continuation']['args']['start'], 81)
+        self.assertLessEqual(CrossFileView.page_bytes(cross), 24000)
+        self.assertLessEqual(len(canonical(cross)), 96000)
+        for e in cross['evidence']:
+            self.assertEqual(e, CrossFileView.from_input(data).citation('head', 'shop/long.py', e['line']))
+        default = View.from_input(data).execute('read_source', dict(path='shop/long.py', revision=head, start=1, end=200))
+        self.assertEqual(default['read']['status'], 'BYTE_LIMIT')
+        self.assertLess(default['read']['returned_lines'], 80)
+        self.assertLessEqual(len(canonical(default)), 24000)
+        wide = ''.join(f'v{i} = "{"y" * 900}"\n' for i in range(40))
+        files[1] = context('shop/long.py', wide)
+        data = snapshot(files)
+        page = CrossFileView.from_input(data).execute('read_source', dict(path='shop/long.py', revision=head, start=1, end=40))
+        self.assertEqual(page['read']['status'], 'BYTE_LIMIT')
+        self.assertLessEqual(CrossFileView.page_bytes(page), 24000)
 
     def test_import_resolution_is_bounded_to_known_paths(self):
         edges, unresolved = import_edges('pkg/a.py', 'import os\nfrom . import b\nfrom ..up import c\nfrom .sub.mod import x\n',

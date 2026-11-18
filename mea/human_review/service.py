@@ -49,6 +49,12 @@ class Service:
         with self.store.connection() as db:
             value=get(db,identifier,'review');value['drafts']=rows(db,'draft',identifier)
             value['sends']=rows(db,'send',identifier)
+        for check in value.get('rereviews',[]):
+            if rereview.legacy(check):
+                check['lineage']='UNKNOWN'
+                for row in check['candidates']:
+                    if row['change']['side']=='head' and row['status']=='NEW':
+                        row.update(status='LINEAGE_UNKNOWN',reason='Head-side drafting is blocked for a legacy re-review.')
         value['tasks']=[self.store.get(v['task_id']) for v in value['versions']]
         value['live_publish']='COMMAND_LINE_ALLOWLIST_ONLY' if self.live else 'DISABLED_NO_AUTHORIZED_REPOSITORY_OR_CREDENTIALS'
         return value
@@ -86,30 +92,40 @@ class Service:
             d=get(db,identifier,'draft')
             if d.get('intent_id'):raise ValueError('DRAFT_HAS_SEND_INTENT')
             if body==d['body'] and anchor==d['anchor']:return d
-            if len(d['history'])>=16:raise ValueError('DRAFT_REVISION_BOUND')
+            if len(d['history'])>=16:
+                # After a release at the bound, the first corrective edit drops the oldest entry once.
+                if d['history'][-1]['status'] not in {'NOT_SENT','UNCERTAIN'}:raise ValueError('DRAFT_REVISION_BOUND')
+                d['history']=d['history'][-15:]
             d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
             d.update(body=body,anchor=copy.deepcopy(anchor),revision=d['revision']+1,confirmation=None,approval=None,status='DRAFT')
             self.payload(d);event(d,'edited','Final text or anchor changed; previous confirmation invalidated.');put(db,d)
         return d
 
     @staticmethod
-    def rereview_block(review,task_id,candidate_id):
+    def rereview_block(review,task_id,candidate_id,anchor_side=None):
         # An outdated comment is never relocated, and a sent comment is never repeated.
         for check in review.get('rereviews',[]):
-            row=next((x for x in check['candidates'] if check['new_task_id']==task_id and x['candidate_id']==candidate_id),None)
+            if check['new_task_id']!=task_id:continue
+            row=next((x for x in check['candidates'] if x['candidate_id']==candidate_id),None)
             if row and row['status']=='DUPLICATE_OF_SENT_COMMENT':raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
             if row and row['status']=='AT_OUTDATED_COMMENT_LOCATION':raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+            # A result stored before the lineage rule is not recomputed; its NEW head-side rows are not trusted.
+            if anchor_side=='head' or (row and row['change']['side']=='head'):
+                if rereview.legacy(check):raise ValueError('REREVIEW_LEGACY_LINEAGE_UNKNOWN')
+                if rereview.unknown_lineage(check):raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
 
     def payload(self,d):
         t,v=task_checked(self.store,d['task_id'])
         with self.store.connection() as db:review=get(db,d['review_id'],'review')
         # Checked on every preview, confirmation and send, not only when a draft is created.
-        self.rereview_block(review,d['task_id'],d['candidate_id'])
+        a=d['anchor'];fields(a,'path side line revision')
+        self.rereview_block(review,d['task_id'],d['candidate_id'],a['side'])
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         candidate=next((c for c in t['candidates'] if c['id']==d['candidate_id']),None)
         if not candidate:raise ValueError('CANDIDATE_NOT_FOUND')
-        a=d['anchor'];fields(a,'path side line revision')
-        if a['side']=='base' and self.incremental(review,d['task_id']):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')
+        # Without a live remote, a predecessor-head base is taken as an increment. A live admission instead
+        # compares GitHub's merge base with the frozen base: a full snapshot whose merge base is that head is valid.
+        if a['side']=='base' and not self.live and self.incremental(review,d['task_id']):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')
         if a['side'] not in {'head','base'} or type(a['line']) is not int or a['revision']!=v.value['revisions'][a['side']] or (a['side'],a['path'],a['line']) not in v.changes:raise ValueError('COMMENT_DIFF_ANCHOR_INVALID')
         citation=v.citation(a['side'],a['path'],a['line'])
         if citation not in candidate['citations']:raise ValueError('COMMENT_ANCHOR_NOT_CANDIDATE_EVIDENCE')
@@ -122,9 +138,11 @@ class Service:
     def incremental(review,task_id):
         """Local evidence that a version's base side is its predecessor's head, not the PR merge base.
 
-        History cannot prove the opposite: a --since snapshot opened as the first version has no
-        linked predecessor. The live lane therefore admits a LEFT anchor only when GitHub's merge
-        base, read in the same admission, equals the frozen base revision (admit_remote)."""
+        Used without a live remote only. History cannot prove either case: a --since snapshot opened
+        as the first version has no linked predecessor, and a full snapshot's merge base can equal the
+        predecessor head once the target branch incorporates it. The live lane therefore admits a LEFT
+        anchor only when GitHub's merge base, read in the same admission, equals the frozen base
+        revision (admit_remote)."""
         versions=review['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==task_id)
         return index>0 and versions[index]['revisions']['base']==versions[index-1]['revisions']['head']
 

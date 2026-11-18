@@ -1,0 +1,18 @@
+# One-command start: docker compose up --build, then open http://127.0.0.1:8810
+# Mock and frozen synthetic snapshots only; no keys, model calls or GitHub access.
+name: mea-review
+services:
+  workbench:
+    build: .
+    ports:
+      - "127.0.0.1:8810:8810"
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"

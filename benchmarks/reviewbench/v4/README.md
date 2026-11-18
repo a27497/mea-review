@@ -88,3 +88,30 @@ repetition holds a lock. `score` refuses outputs that differ from the judged
 packet, and `judge` exits non-zero when the ledger refused a judge request.
 The cost ledger prices reported usage at the official list price, keeps a
 peak-rate bound and refuses a request above USD 10 or above the PLAN cap.
+
+## Known issues
+
+`m3.py` is kept for the frozen M3 records only: replaying and recomputing the
+holdout result in [RESULTS.md](RESULTS.md). M3 ended with
+NEGATIVE_RESULT_STOP and no new round is planned. The operator flow has these
+open gaps, recorded from review and not fixed, so the frozen scoring path stays
+unchanged. Fix them before any new round is run, judged or scored:
+
+- The exclusion list's `repositories` and `pull_requests` fields are not
+  type-checked; a string instead of a list would be read as characters. The
+  frozen list holds string arrays.
+- The run lock covers one arm and repetition. Two arms of one round can run at
+  the same time, and a first attempt of a repetition can still run after the
+  round was judged.
+- `judge` writes the packet before its preflight (for example a missing
+  `--confirm-real-provider`) is complete, which then blocks a valid rerun.
+- Rerun promotion archives the active result before moving the replacement
+  in; an interruption between the two steps leaves the slug without an active
+  result. Finished staged outputs of a failed multi-slug rerun are not
+  recovered, so a retry can pay again for them.
+- `judge` and a rerun do not share a lock, and `score` compares only the
+  rebuilt blind packet, not the candidate mapping. A rerun candidate that
+  duplicates another arm's candidate can then be left out of its arm's score.
+
+The frozen M3 outputs were recomputed byte for byte with this code; packet and
+mapping were rebuilt and match the frozen files.

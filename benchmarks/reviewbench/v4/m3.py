@@ -1,5 +1,11 @@
 """M3 operator CLI: capture, run arms, blind judging, scoring and agreement packets.
 
+FOR THE FROZEN M3 RECORDS ONLY. M3 ended with NEGATIVE_RESULT_STOP; this CLI is kept to replay
+and recompute those records. It has known operator-flow gaps (exclusion field types, round-wide
+locking, judge/rerun serialization, staged-rerun recovery, packet-only mapping check; see
+benchmarks/reviewbench/v4/README.md, "Known issues"). They must be fixed before any new round
+is run, judged or scored with it.
+
 Every billed call is attended and bounded by the declared sample list of one invocation: one POST
 per request, no retries. Private inputs and outputs live under --private (never in Git).
 
@@ -596,6 +602,8 @@ def main(argv=None):
         if name == 'agreement':
             p.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)
+    print('NOTICE: m3.py is for the frozen M3 records only; see benchmarks/reviewbench/v4/README.md "Known issues".',
+          file=sys.stderr)
     # Only `agreement` with an explicit --runs works without the private directory.
     if args.private is None and not (args.cmd == 'agreement' and args.runs is not None):
         parser.error('--private (or MEA_M3_PRIVATE) is required for this command')

@@ -493,10 +493,15 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
 
     def head_tree():
         # One recursive tree read per capture, shared by null-SHA identity checks and context selection.
-        # The gaps of that read are kept with it, so context selection reports them wherever it ran.
+        # The read is classified here, so an unavailable or truncated tree is a capture gap even when
+        # context selection does not run; context selection reports the same gaps without adding them again.
         if not trees:
             before = len(c.gaps)
             response, tree = c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree')
+            if tree is None and response is not None:  # A definitive 404/422: the pinned tree is not available.
+                c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')
+            elif tree is not None and tree['truncated']:
+                c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
             trees.append((response, tree, c.gaps[before:]))
         return trees[0][:2]
 
@@ -559,16 +564,10 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     else:
         early = bool(trees)
         before_context = len(c.gaps)
-        response, tree = head_tree()
+        _, tree = head_tree()
         tree_gaps = [dict(g) for g in trees[0][2]] if early else []  # Recorded before before_context.
-        if tree is None:
-            if response is not None:  # A definitive 404/422: the pinned tree is not available.
-                c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')
-            entries = None
-        else:
-            entries = [e for e in tree['tree'] if e['type'] == 'blob']  # [] is an explicitly empty tree.
-            if tree['truncated']:
-                c.gap(TRUNCATED, 'PROVIDER_TREE_TRUNCATED', None, 'head', request='tree')
+        # [] is an explicitly empty tree; None means no tree was available.
+        entries = None if tree is None else [e for e in tree['tree'] if e['type'] == 'blob']
         picks = select_context(c, files, entries, TOTAL_BYTES - used, head, owner, repo, context_limit, search_pause) if entries else []
         blobs = {e['path']: e['sha'] for e in entries or []}
         sizes = {e['path']: e.get('size') for e in entries or []}  # None: the tree omitted the optional size.

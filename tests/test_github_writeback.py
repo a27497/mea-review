@@ -594,6 +594,27 @@ class WritebackTests(unittest.TestCase):
         p = self.approve()
         self.assertEqual(Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')['status'], 'PUBLISHED')
 
+    def test_corrective_edit_after_a_release_at_the_history_bound(self):
+        for i in range(16):
+            self.s.edit(self.d['id'], f'Revision {i}', self.d['anchor'])
+        with self.assertRaisesRegex(ValueError, 'DRAFT_REVISION_BOUND'):
+            self.s.edit(self.d['id'], 'One more', self.d['anchor'])
+        p = self.approve()
+        self.fake.fault = 'HTTP_422'
+        r = Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(r['status'], 'NOT_SENT')
+        Publisher(self.s).abandon_not_sent(r['id'], True)
+        # The rejected payload needs a correction: one edit is admitted at the bound, then a new confirmation.
+        d = self.s.edit(self.d['id'], 'Corrected body', self.d['anchor'])
+        self.assertEqual((d['body'], d['status'], d['confirmation'], len(d['history'])), ('Corrected body', 'DRAFT', None, 16))
+        with self.assertRaisesRegex(ValueError, 'DRAFT_REVISION_BOUND'):
+            self.s.edit(self.d['id'], 'Second correction', self.d['anchor'])
+        with self.assertRaisesRegex(ValueError, 'HUMAN_CONFIRMATION_REQUIRED'):
+            Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        p = self.approve()
+        sent = Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual((sent['status'], sent['payload']['body']), ('PUBLISHED', 'Corrected body'))
+
     def test_rereviews_run_in_version_order(self):
         first = self.sent()
         t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-order-2'))
@@ -656,6 +677,27 @@ class WritebackTests(unittest.TestCase):
         review = dict(versions=[dict(task_id='a', revisions=dict(base=B, head=H1)), dict(task_id='b', revisions=dict(base=H1, head=H2)),
                                 dict(task_id='c', revisions=dict(base=H1, head=H3))])
         self.assertEqual([Service.incremental(review, x) for x in 'abc'], [False, True, False])
+
+    def test_full_snapshot_whose_merge_base_is_the_previous_head_admits_left_live(self):
+        # v1 B..H1 is linked to v2 H1..H2. Live, GitHub's merge base decides, not the linked heads.
+        self.fake.push(H2, {'quota.py': diff(V1, V2_REPLACE)})
+        t2 = self.base_side_task(snapshot(H1, H2, V1, V2_REPLACE, 'm5-merged-base'))
+        r = self.s.increment(self.r['id'], t2['id'])
+        self.assertTrue(Service.incremental(r, t2['id']))
+        d = self.s.draft(r['id'], t2['id'], t2['candidates'][0]['id'])
+        # The target branch incorporated H1, so H1 is the merge base of the full snapshot at H2.
+        self.fake.merge_base = H1
+        p = self.s.preview(d['id'])
+        self.assertEqual((p['payload']['side'], p['base_revision'], p['live_publish']), ('LEFT', H1, True))
+        # An actual increment (merge base still B) is refused by the same live check.
+        self.fake.merge_base = B
+        with self.assertRaisesRegex(ValueError, 'LEFT_SIDE_BASE_MISMATCH'):
+            self.s.preview(d['id'])
+        # Without a live remote the linked-head rule still refuses the base side.
+        mock = Service(self.store)
+        with self.assertRaisesRegex(ValueError, 'INCREMENT_BASE_SIDE_NOT_COMMENTABLE'):
+            mock.payload(d)
+        self.assertEqual(self.posts(), 0)
 
     def test_comment_sent_on_a_later_version_is_mapped_after_an_earlier_recheck(self):
         t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-late-2'))
@@ -781,6 +823,74 @@ class WritebackTests(unittest.TestCase):
         self.assertEqual(self.posts(), 1)
 
 
+    # ---- M5: lineage that cannot be re-established ---------------------------------------------
+
+    def test_reused_path_after_an_omitted_rename_keeps_the_lineage_unknown(self):
+        first = self.sent()
+        rid = self.r['id']
+        h4 = '4' * 40
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm5-reuse-2'))
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        # v3 omits quota.py -> renamed_quota.py from an incomplete listing.
+        partial = snapshot(H2, H3, 'def quota():\n    return 5\n', 'def quota():\n    return 6\n', 'm5-reuse-3')
+        partial['files'][0].update(path='independent.py', base_path='independent.py')
+        partial['scope'].update(complete_listing=False, reported_changed_files=3)
+        t3 = offline_task(self.store, partial)
+        self.fake.push(H3, {'renamed_quota.py': diff(BASE, V2_REPLACE)})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        # v4: a complete listing edits the region under the new name and adds an unrelated quota.py.
+        latest = snapshot(H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'm5-reuse-4')
+        latest['files'][0].update(path='renamed_quota.py', base_path='renamed_quota.py')
+        latest['files'][1]['sides'] = {name: side(CALLER.replace('from quota', 'from renamed_quota')) for name in ('head', 'base')}
+        reused = 'LIMIT = 3\n'
+        latest['files'].append(dict(path='quota.py', base_path='quota.py', status='added', patch=diff('', reused), sides=dict(head=side(reused))))
+        latest['scope']['reported_changed_files'] = 3
+        t4 = offline_task(self.store, latest)
+        self.assertEqual([c['change']['path'] for c in t4['candidates']], ['renamed_quota.py'])
+        self.fake.push(h4, {'renamed_quota.py': diff(BASE, V3_REPLACE_AGAIN), 'quota.py': diff('', reused)})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t4['id'])[0], 0)
+        check = self.s.open(rid)['rereviews'][-1]
+        self.assertEqual(check['comments'][0]['replaced_region_unresolved']['lineage'], 'UNKNOWN')
+        self.assertEqual([c['status'] for c in check['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'])
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
+        self.assertEqual(self.posts(), 1)
+
+    def test_stored_result_without_the_lineage_rule_refuses_head_drafts(self):
+        first = self.sent()
+        rid = self.r['id']
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm5-legacy-2'))
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        out = self.root / 'early-draft.json'
+        self.s.increment(rid, t2['id'])
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t2['id'], '--candidate', t2['candidates'][0]['id'], out=out)
+        self.assertEqual(code, 0, printed)
+        draft_id = json.loads(out.read_bytes())['draft_id']
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        # Rewrite the stored result as an older version saved it: no lineage rule, the candidate NEW.
+        with self.store.transaction() as db:
+            r = get(db, rid, 'review')
+            stored = r['rereviews'][-1]
+            self.assertEqual(stored['comments'][0]['status'], 'OUTDATED')
+            stored.pop('lineage_rule')
+            for row in stored['candidates']:
+                row['status'] = 'NEW'
+            db.execute('update human_records set doc=? where id=?', (json.dumps(r), rid))
+        # A repeated re-review keeps the stored rows, and draft and preview are still refused.
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        check = self.s.open(rid)['rereviews'][-1]
+        self.assertEqual(check['lineage'], 'UNKNOWN')
+        self.assertEqual(check['candidates'][0]['status'], 'LINEAGE_UNKNOWN')
+        with self.store.connection() as db:
+            self.assertEqual(get(db, rid, 'review')['rereviews'][-1]['candidates'][0]['status'], 'NEW')
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t2['id'], '--candidate', t2['candidates'][0]['id'])
+        self.assertEqual((code, 'REREVIEW_LEGACY_LINEAGE_UNKNOWN' in printed), (2, True))
+        code, printed = self.run_cli('preview', '--draft', draft_id)
+        self.assertEqual((code, 'REREVIEW_LEGACY_LINEAGE_UNKNOWN' in printed), (2, True))
+        self.assertEqual(self.posts(), 1)
+
+
 class AnchorMappingTests(unittest.TestCase):
     def test_line_mapping_through_hunks(self):
         patch_text = diff('a\nb\nc\nd\ne\nf\n', 'x\na\nb\nC\nd\nf\n')
@@ -834,8 +944,9 @@ class AnchorMappingTests(unittest.TestCase):
                    candidates=candidates or [dict(id='c1', change=dict(path='a.py', line=4, side='head', revision=H3))])
         send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
                     remote_comment=dict(id=1, html_url='u'))
-        prior = [dict(new_head=region_head, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1),
-                                                           replaced_head_lines=dict(path='a.py', start=2, end=3))])]
+        prior = [dict(new_head=region_head, lineage_rule=rereview.LINEAGE_RULE,
+                      comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1),
+                                     replaced_head_lines=dict(path='a.py', start=2, end=3))])]
         result = rereview.check(old, new, [send], None, prior)
         return result['comments'][0], [c['status'] for c in result['candidates']]
 
@@ -863,8 +974,9 @@ class AnchorMappingTests(unittest.TestCase):
         old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
         send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
                     remote_comment=dict(id=1, html_url='u'))
-        prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
-                                                  replaced_region_unresolved=dict(path='a.py', reason='earlier'))])]
+        prior = [dict(new_head=H3, lineage_rule=rereview.LINEAGE_RULE,
+                      comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
+                                     replaced_region_unresolved=dict(path='a.py', reason='earlier', lineage='KNOWN'))])]
         def run(files, candidate_path):
             new = dict(view=dict(revisions=dict(base=H3, head='4' * 40), files=files, coverage=dict(complete_listing=True)),
                        candidates=[dict(id='c1', change=dict(path=candidate_path, line=7, side='head', revision='4' * 40))])
@@ -882,32 +994,88 @@ class AnchorMappingTests(unittest.TestCase):
         row, statuses = run([removed], 'a.py')
         self.assertEqual((row.get('replaced_region_unresolved'), statuses), (None, ['NEW']))
 
-    def test_unknown_lineage_blocks_every_head_file_until_a_listing_names_the_last_path(self):
+    def test_unknown_lineage_blocks_every_head_file_and_is_never_cleared_by_a_listing(self):
         old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
         send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
                     remote_comment=dict(id=1, html_url='u'))
-        prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
-                                                  replaced_region_unresolved=dict(path='a.py', reason='earlier', lineage='UNKNOWN'))])]
-        def run(files, base=H3, complete=True):
+        def prior(marker, rule=rereview.LINEAGE_RULE):
+            value = dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
+                                                     replaced_region_unresolved=marker)])
+            if rule:
+                value['lineage_rule'] = rule
+            return [value]
+        unknown = prior(dict(path='a.py', reason='earlier', lineage='UNKNOWN'))
+        def run(files, base=H3, complete=True, earlier=unknown, candidate='b.py'):
             new = dict(view=dict(revisions=dict(base=base, head='4' * 40), files=files, coverage=dict(complete_listing=complete)),
-                       candidates=[dict(id='c1', change=dict(path='b.py', line=7, side='head', revision='4' * 40))])
-            result = rereview.check(old, new, [send], None, prior)
-            return result['comments'][0].get('replaced_region_unresolved'), [c['status'] for c in result['candidates']]
+                       candidates=[dict(id='c1', change=dict(path=candidate, line=7, side='head', revision='4' * 40))])
+            result = rereview.check(old, new, [send], None, earlier)
+            return result['comments'][0].get('replaced_region_unresolved'), [c['status'] for c in result['candidates']], result
         other = dict(path='b.py', base_path='b.py', status='modified', patch='@@ -7 +7 @@\n-x\n+y\n', sides=dict(head=dict()))
         # A complete listing that does not name a.py: it may be b.py now, so b.py stays blocked.
-        marker, statuses = run([other])
+        marker, statuses, _ = run([other])
         self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
         # A non-linear step keeps the lineage unknown.
-        marker, statuses = run([other], base=H2)
+        marker, statuses, _ = run([other], base=H2)
         self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
-        # A listing that names a.py by its last path makes the lineage known again; b.py is then unrelated.
-        named = dict(path='a.py', base_path='a.py', status='modified', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict()))
-        marker, statuses = run([named, other])
-        self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'KNOWN', ['NEW']))
+        # The last known path listed again, as an edit, a new file reusing the name, a rename or a removal,
+        # does not establish that it is the same file: the lineage stays unknown and b.py stays blocked.
+        reuse = [dict(path='a.py', base_path='a.py', status='modified', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict())),
+                 dict(path='a.py', base_path='a.py', status='added', patch='@@ -0,0 +1 @@\n+y\n', sides=dict(head=dict())),
+                 dict(path='c.py', base_path='a.py', status='renamed', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict())),
+                 dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))]
+        for entry in reuse:
+            with self.subTest(status=entry['status']):
+                marker, statuses, result = run([entry, other])
+                self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+                self.assertIn('unknown', result['candidates'][0]['reason'])
+                self.assertEqual(result['lineage_rule'], rereview.LINEAGE_RULE)
         # A known marker turns unknown when a later listing is incomplete and does not name the file.
-        prior[0]['comments'][0]['replaced_region_unresolved'] = dict(path='a.py', reason='earlier')
-        marker, statuses = run([other], complete=False)
+        known = prior(dict(path='a.py', reason='earlier', lineage='KNOWN'))
+        marker, statuses, _ = run([other], complete=False, earlier=known)
         self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+
+    def test_records_without_lineage_are_read_as_unknown(self):
+        old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        named = dict(path='a.py', base_path='a.py', status='modified', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict()))
+        new = dict(view=dict(revisions=dict(base=H3, head='4' * 40), files=[named], coverage=dict(complete_listing=True)),
+                   candidates=[dict(id='c1', change=dict(path='b.py', line=7, side='head', revision='4' * 40))])
+        rows = {
+            # A marker written before lineage existed.
+            'marker_without_lineage': dict(replaced_head_lines=None, replaced_region_unresolved=dict(path='a.py', reason='earlier')),
+            # A mapped region from a result stored before the lineage rule: an omitted rename may have moved it.
+            'legacy_region': dict(replaced_head_lines=dict(path='a.py', start=1, end=1)),
+        }
+        for name, extra in rows.items():
+            with self.subTest(name):
+                prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), **extra)])]
+                result = rereview.check(old, new, [send], None, prior)
+                marker = result['comments'][0]['replaced_region_unresolved']
+                self.assertEqual((marker['path'], marker['lineage']), ('a.py', 'UNKNOWN'))
+                self.assertEqual([c['status'] for c in result['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        # A stored result without the rule is legacy regardless of its saved statuses.
+        self.assertTrue(rereview.legacy(dict(comments=[dict(status='OUTDATED')])))
+        self.assertTrue(rereview.legacy(dict(comments=[dict(status='CURRENT')])))
+        self.assertFalse(rereview.legacy(dict(lineage_rule=rereview.LINEAGE_RULE, comments=[dict(status='OUTDATED')])))
+
+    def test_unmapped_lines_in_a_known_file_have_their_own_reason(self):
+        edit = dict(path='a.py', base_path='a.py', status='modified', patch=None, sides=dict(head=dict()))
+        old = dict(view=dict(revisions=dict(head=H2), files=[]), candidates=[])
+        new = dict(view=dict(revisions=dict(base=H2, head=H3), files=[edit], coverage=dict(complete_listing=True)),
+                   candidates=[dict(id='c1', change=dict(path='a.py', line=40, side='head', revision=H3))])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(new_head=H2, lineage_rule=rereview.LINEAGE_RULE,
+                      comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1),
+                                     replaced_head_lines=dict(path='a.py', start=2, end=3))])]
+        result = rereview.check(old, new, [send], None, prior)
+        self.assertEqual(result['comments'][0]['replaced_region_unresolved']['lineage'], 'KNOWN')
+        row = result['candidates'][0]
+        self.assertEqual(row['status'], 'AT_OUTDATED_COMMENT_LOCATION')
+        self.assertIn('could not be mapped', row['reason'])
+        self.assertIn('whole file', row['reason'])
+        self.assertNotIn('Inside the lines', row['reason'])
 
     def test_copies_incomplete_listings_and_missing_sources_are_not_guessed(self):
         copy_entry = dict(path='b.py', base_path='a.py', status='copied', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(head=dict()))

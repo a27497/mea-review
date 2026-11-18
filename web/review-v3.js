@@ -434,7 +434,9 @@ function exportsFor(task, review) {
   return wrap;
 }
 function renderCompleted(n, t) {
-  n.append(el('h2','Offline investigation','rail-heading'));
+  // Real and Mock provider tasks are labelled as such; their request count comes from the task record.
+  const heading = {REAL_PROVIDER_DEEPSEEK:'Real model investigation', MOCK_PROVIDER_NOT_AI:'Mock provider investigation'}[t?.mode];
+  n.append(el('h2',heading || 'Offline investigation','rail-heading'));
   if (!t) { n.append(el('p', 'No saved investigation is open.', 'rail-sub')); return; }
   const results = t.results || [];
   const zero = t.status === 'COMPLETED' && t.reason === 'ZERO_CANDIDATES';
@@ -458,7 +460,7 @@ function renderCompleted(n, t) {
   }
   const headCount = [...seen.values()].reduce((sum, rows) => sum + ([...rows.values()][0]?.side === 'head' ? rows.size : 0), 0);
   const metrics = el('div','','metrics');
-  for (const [value, title] of [[0,'Model requests'],
+  for (const [value, title] of [[(t.requests || []).length,'Model requests'],
     [results.filter(r => r.tool === 'read_source').length,'Source reads'],[headCount,'HEAD lines']]) {
     const d = el('div'); d.append(el('strong',String(value)),el('span',title)); metrics.append(d);
   }
@@ -540,7 +542,7 @@ function candidateStatus(t, c) {
   const d = state.human?.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
   const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
   const blocked = check && check.status !== 'NEW' ? check.status : null;
-  return d ? readStatus(d) : blocked || 'NOT DRAFTED';
+  return blocked || (d ? readStatus(d) : 'NOT DRAFTED');
 }
 function renderEditor(n,t,c,d) {
   const ctx = current();
@@ -667,6 +669,8 @@ function renderHuman(n,t) {
   const c = candidate(), mock = owns(state.human);
   n.append(el('p', mock ? 'Owned fixture · Deterministic candidate · Simulated GitHub' : 'Human confirmation · Frozen task','rail-sub'));
   if (c) {
+    const check = (state.human.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
+    const blocked = check && check.status !== 'NEW';
     const meta = el('p'); meta.append(tag('CONDITIONAL','accent'),'  ' + t.candidates.length + ' candidate' + (t.candidates.length === 1 ? '' : 's')); n.append(meta);
     if (t.candidates.length > 1) {
       const list = block(n,'Candidates');
@@ -676,19 +680,22 @@ function renderHuman(n,t) {
     n.append(el('h3',c.title,'candidate-title'),el('p','If ' + c.trigger.replace(/^If\s+/,'').replace(/\.$/,'') + ', ' + impact.charAt(0).toLowerCase() + impact.slice(1),'rail-sub'));
     block(n,'Citation valid · Semantics unadjudicated', el('p','The changed line and collected source match this frozen revision. Runtime reachability and defect status are unconfirmed.','rail-sub'));
     const d = currentDraft();
-    if (!d) {
+    if (blocked) {
+      n.append(el('p',check.reason,'rail-sub'));
+    }
+    if (!d && !blocked) {
       n.append(card('Select candidate',name(c.change.path) + ':' + c.change.line + ' · changed ' + anchors[c.change.side] + ' line', () => act(async () => {
         await human('draft',{review_id:state.human.id,task_id:t.id,candidate_id:c.id});
         await refreshHuman(); renderRail(true); locate(t,c.change,true);
       }), 'select-candidate'));
       n.append(el('p','Select the candidate to create a draft. Follow the source anchor and use Back to review to edit the comment.','rail-sub'));
-    } else {
+    } else if (d) {
       const evidence = block(n,'Frozen evidence',locationCard(c.change,t,'Changed line',name(c.change.path) + ':' + c.change.line + ' · ' + anchors[c.change.side],true));
       for (const e of c.citations.filter(e => e.path !== c.change.path || e.line !== c.change.line || e.side !== c.change.side)) {
         evidence.append(locationCard(e,t,'Caller evidence',name(e.path) + ':' + e.line + ' · ' + sides[e.side]));
       }
       evidence.append(lazy('Exact citation data',() => [pre(c.citations)]));
-      renderEditor(n,t,c,d);
+      if (!blocked || d.intent_id) renderEditor(n,t,c,d);
     }
   } else n.append(el('p','This frozen version has no accepted candidate. No comment was created.','rail-sub'));
   renderRereview(n,t);
@@ -726,6 +733,7 @@ function renderRereview(n,t) {
   const section = block(n,'Incremental re-review');
   section.id = 'rereview-status';
   section.append(el('p',check.relation + ' · ' + short(check.old_head) + ' → ' + short(check.new_head),'mono'));
+  if (check.lineage === 'UNKNOWN') section.append(el('p','Legacy re-review. Head-side file lineage is unknown.','rail-sub'));
   for (const row of check.comments) {
     const where = row.old.path + ':' + row.old.line + ' ' + row.old.side;
     const now = row.new ? ' → ' + row.new.path + ':' + row.new.line : '';

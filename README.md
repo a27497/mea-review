@@ -190,10 +190,20 @@ mapped line, cannot be drafted. Those replacement lines are mapped through each
 later increment; when they cannot be mapped (incomplete listing, missing patch
 or head source), candidates in that file cannot be drafted in that or any later
 increment. If an incomplete listing does not name that file, a rename may have
-been omitted, so no head-side candidate can be drafted or previewed until a later
-listing names the file by its last known path. Re-reviews run in version order:
-a version's re-review needs its predecessor's re-review first, and a refused
-re-review links nothing and leaves confirmations in place.
+been omitted. The marker then keeps the last known path with lineage UNKNOWN,
+and no head-side candidate can be drafted or previewed. Re-reviews run in
+version order: a version's re-review needs its predecessor's re-review first,
+and a refused re-review links nothing and leaves confirmations in place.
+
+Known limitations of the UNKNOWN lineage:
+
+- UNKNOWN is cleared as soon as a later listing contains the last known path,
+  even when that entry is an unrelated file that reuses the name. Protection
+  then narrows to that path, and a candidate in the renamed file can be
+  drafted.
+- A re-review record written before this rule has no lineage field and is read
+  as KNOWN. A stored result for a version is not recomputed by a repeated
+  `rereview`, so candidates that an older version marked NEW stay draftable.
 
 The workbench shows confirmation, writeback and re-review state for these
 reviews. It has no live remote and cannot confirm or send a live draft.

@@ -1,4 +1,6 @@
 """Remote outcome types shared by the Mock and the live writeback lane. No transport here."""
+import re
+
 from ..contract import digest
 
 LIVE_MODE = 'LIVE_GITHUB'
@@ -23,6 +25,20 @@ class Uncertain(Exception):
         super().__init__(code)
         self.code = code
         self.receipt = receipt
+
+
+def anchor_others(payload, remote):
+    """Comments by other accounts (bots included) on the payload's exact anchor, as shown to the confirmer.
+
+    The live lane compares this list again immediately before the POST, so a later change to
+    these comments (added, removed or edited) needs a new confirmation."""
+    rows = []
+    for c in remote['comments']:
+        if c.get('user', {}).get('login') != remote['principal'] and all(c.get(k) == payload[k] for k in ['commit_id', 'path', 'line', 'side']):
+            plain = ' '.join(re.sub(r'<!--.*?-->|<[^>]+>', '', c.get('body') or '', flags=re.S).split())
+            rows.append(dict(id=c['id'], login=c['user']['login'], html_url=c.get('html_url'), excerpt=plain[:300],
+                             label='Already raised by ' + c['user']['login']))
+    return rows
 
 
 def is_live(remote):

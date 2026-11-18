@@ -60,7 +60,7 @@ class Publisher:
             try:
                 if self.service.live:
                     # The other-account comments the human saw at this anchor must still be exactly those.
-                    others=[c['id'] for c in current['approved_snapshot'].get('other_comments_at_anchor',[])]
+                    others=copy.deepcopy(current['approved_snapshot'].get('other_comments_at_anchor'))
                     comment=self.remote.post(current['target'],copy.deepcopy(current['payload']),current['remote_snapshot']['generation'],others=others)
                 else:comment=self.remote.post(current['target'],copy.deepcopy(current['payload']),current['remote_snapshot']['generation'])
                 self.validate_comment(comment,current)

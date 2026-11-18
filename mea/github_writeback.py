@@ -21,7 +21,7 @@ from .contract import canonical, digest
 from .patch import parse as parse_patch
 from .github_input import token
 from .human_review import github_contract
-from .human_review.remote import LIVE_MODE, NotSent, Uncertain, binding as binding_of
+from .human_review.remote import LIVE_MODE, NotSent, Uncertain, anchor_others, binding as binding_of
 
 HOST = 'api.github.com'
 ACCEPT = 'application/vnd.github+json'
@@ -225,9 +225,9 @@ class LiveGitHub:
         if any(c['user']['login'] == remote['principal'] and c['commit_id'] == payload['commit_id'] and c['path'] == payload['path']
                and c['line'] == payload['line'] and c['side'] == payload['side'] for c in remote['comments']):
             raise NotSent('DUPLICATE_REMOTE_ANCHOR')
-        seen = sorted(c['id'] for c in remote['comments'] if c['user']['login'] != remote['principal'] and c['commit_id'] == payload['commit_id']
-                      and c['path'] == payload['path'] and c['line'] == payload['line'] and c['side'] == payload['side'])
-        if others is None or seen != sorted(others):
+        # others: the anchor comments of other accounts in the approved confirmation snapshot. Any
+        # change to them (new, removed or edited) means the human did not see this state.
+        if others is None or anchor_others(payload, remote) != others:
             raise NotSent('OTHER_COMMENTS_AT_ANCHOR_CHANGED')
         if payload['line'] not in remote['commentable'].get(payload['path'], {}).get(payload['side'], []):
             raise NotSent('REMOTE_DIFF_ANCHOR_INVALID')
@@ -317,7 +317,11 @@ def main(argv=None):
     p = sub.add_parser('decline'); p.add_argument('--draft', required=True); p.add_argument('--approval-ref', required=True)
     p = sub.add_parser('send'); p.add_argument('--draft', required=True); p.add_argument('--confirm-live-write', action='store_true')
     p = sub.add_parser('reconcile'); p.add_argument('--intent', required=True)
-    p = sub.add_parser('abandon-not-sent'); p.add_argument('--intent', required=True); p.add_argument('--human-approved', action='store_true')
+    # A definitive rejection (400/401/403/404/422) or an interrupted preparation leaves a NOT_SENT
+    # intent holding the slot. Only that state can be abandoned; UNCERTAIN needs reconcile first.
+    p = sub.add_parser('abandon-not-sent', help='release a provably unsent intent; the draft then needs a new preview and confirmation')
+    p.add_argument('--intent', required=True)
+    p.add_argument('--human-approved', action='store_true')
     p = sub.add_parser('release-after-reconcile'); p.add_argument('--intent', required=True); p.add_argument('--human-approved', action='store_true')
     p = sub.add_parser('read'); p.add_argument('--repository', required=True); p.add_argument('--pr', type=int, required=True)
     p = sub.add_parser('rereview'); p.add_argument('--review', required=True); p.add_argument('--task-id', required=True)
@@ -385,7 +389,7 @@ def main(argv=None):
             result = dict(intent_id=s['id'], status=s['status'], comment=s.get('remote_comment'), events=s['events'])
         elif args.command == 'abandon-not-sent':
             d = Publisher(service).abandon_not_sent(args.intent, True)
-            result = dict(draft_id=d['id'], status=d['status'])
+            result = dict(draft_id=d['id'], status=d['status'], revision=d['revision'], abandoned_intents=d['abandoned_intents'])
         elif args.command == 'release-after-reconcile':
             d = Publisher(service).release_after_reconcile(args.intent, True)
             result = dict(draft_id=d['id'], status=d['status'])

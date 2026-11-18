@@ -5,13 +5,12 @@ attended command-line lane (mea.github_writeback); the workbench never has one.
 """
 import copy
 import json
-import re
 from ..contract import digest,canonical,fields,text
 from ..investigation.tools import View
 from ..investigation.validation import validate_candidates
 from .store import ensure,get,put,record,event,rows
 from .mock_github import MockGitHub,TARGET
-from .remote import binding,is_live
+from .remote import anchor_others,binding,is_live
 from . import demo,compare,rereview
 
 
@@ -121,10 +120,13 @@ class Service:
 
     @staticmethod
     def incremental(review,task_id):
-        # The base side of an increment snapshot is the previous head, not the PR merge base.
-        # The live remote also checks LEFT anchors against GitHub's merge base (admit_remote).
-        versions=review['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==task_id)
-        return index>0 and versions[index]['revisions']['base']==versions[index-1]['revisions']['head']
+        """Local evidence that a version's base side is an earlier head, not the PR merge base.
+
+        History cannot prove the opposite: a --since snapshot opened as the first version has no
+        linked predecessor. The live lane therefore admits a LEFT anchor only when GitHub's merge
+        base, read in the same admission, equals the frozen base revision (admit_remote)."""
+        versions=review['versions'];base=next(v for v in versions if v['task_id']==task_id)['revisions']['base']
+        return any(v['task_id']!=task_id and v['revisions']['head']==base for v in versions)
 
     def remote_identity(self,remote):
         return copy.deepcopy(self.remote.identity_of(remote))
@@ -147,27 +149,22 @@ class Service:
     @staticmethod
     def others(value,remote):
         """Comments by other accounts (including bots) on the same anchor, shown to the confirmer."""
-        p=value['payload'];rows=[]
-        for c in remote['comments']:
-            if c.get('user',{}).get('login')!=remote['principal'] and all(c.get(k)==p[k] for k in ['commit_id','path','line','side']):
-                plain=' '.join(re.sub(r'<!--.*?-->|<[^>]+>','',c.get('body') or '',flags=re.S).split())
-                rows.append(dict(id=c['id'],login=c['user']['login'],html_url=c.get('html_url'),excerpt=plain[:300],label='Already raised by '+c['user']['login']))
-        return rows
+        return anchor_others(value['payload'],remote)
 
     @staticmethod
     def slot(value):
         return digest(dict(target=value['target'],**{k:value['payload'][k] for k in ['commit_id','path','line','side']}))
 
-    @staticmethod
-    def admit_remote(value,remote):
+    def admit_remote(self,value,remote):
         if remote['identity']!=value['target'] or remote['head']!=value['payload']['commit_id']:raise ValueError('PR_HEAD_DRIFT')
         if not remote['can_comment'] or remote['state']!='open':raise ValueError('REMOTE_PERMISSION_OR_STATE')
         if not remote['complete_listing']:raise ValueError('REMOTE_DUPLICATES_UNKNOWN')
         # Idempotency: our own principal never comments twice on one anchor. Other reviewers' comments do not block.
         if any(c.get('user',{}).get('login')==remote['principal'] and all(c.get(k)==value['payload'][k] for k in ['commit_id','path','line','side']) for c in remote['comments']):raise ValueError('DUPLICATE_REMOTE_ANCHOR')
         p=value['payload']
-        # LEFT means the PR merge base on GitHub; refuse when the frozen base side is another commit (an increment).
-        if p['side']=='LEFT' and 'merge_base' in remote and value['base_revision']!=remote['merge_base']:raise ValueError('LEFT_SIDE_BASE_MISMATCH')
+        # LEFT means the PR merge base on GitHub; refuse when the frozen base side is another commit (an increment),
+        # whatever the review history says. A live remote must report the merge base; its absence is a refusal.
+        if p['side']=='LEFT' and (self.live or 'merge_base' in remote) and remote.get('merge_base')!=value['base_revision']:raise ValueError('LEFT_SIDE_BASE_MISMATCH')
         if 'commentable' in remote and p['line'] not in remote['commentable'].get(p['path'],{}).get(p['side'],[]):raise ValueError('REMOTE_DIFF_ANCHOR_INVALID')
 
     def decline(self,identifier,reference):

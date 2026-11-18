@@ -208,29 +208,35 @@ class Service:
         return d
 
     def increment(self,review_id,new_task_id):
-        new,nv=task_checked(self.store,new_task_id)
+        task_checked(self.store,new_task_id)
         with self.store.launch_lock(),self.store.transaction() as db:
             r=get(db,review_id,'review')
-            if new_task_id in [v['task_id'] for v in r['versions']]:return self.open(review_id)
-            if len(r['versions'])>=8:raise ValueError('REVIEW_VERSION_BOUND')
-            old,ov=task_checked(self.store,r['versions'][-1]['task_id'])
-            if any(new['pr'][k]!=old['pr'][k] for k in ['repository','number','url']):raise ValueError('REVIEW_PR_MISMATCH')
-            if nv.value['revisions']['head']==ov.value['revisions']['head']:raise ValueError('NEW_FROZEN_HEAD_REQUIRED')
-            result=compare.compare(old,new)
-            r['versions'].append(dict(task_id=new_task_id,view_sha256=nv.sha256,revisions=nv.value['revisions']));r['comparisons'].append(dict(old_task_id=old['id'],new_task_id=new['id'],**result))
-            event(r,'manual_rereview','Explicit user action linked independently frozen tasks and source-based comparisons. No model, publication or comment modification.');put(db,r)
-            for d in rows(db,'draft',review_id):
-                if d['review_id']==review_id and not d.get('intent_id') and d.get('confirmation'):
-                    event(d,'version_changed','New frozen review version invalidated the old confirmation.',previous_confirmation=d['confirmation'])
-                    d.update(confirmation=None,approval=None,status='DRAFT');put(db,d)
+            if new_task_id not in [v['task_id'] for v in r['versions']]:self.link(db,r,new_task_id)
         return self.open(review_id)
+
+    def link(self,db,r,new_task_id):
+        """Append a version, its comparison and the confirmation invalidation inside the caller's transaction."""
+        new,nv=task_checked(self.store,new_task_id)
+        if len(r['versions'])>=8:raise ValueError('REVIEW_VERSION_BOUND')
+        old,ov=task_checked(self.store,r['versions'][-1]['task_id'])
+        if any(new['pr'][k]!=old['pr'][k] for k in ['repository','number','url']):raise ValueError('REVIEW_PR_MISMATCH')
+        if nv.value['revisions']['head']==ov.value['revisions']['head']:raise ValueError('NEW_FROZEN_HEAD_REQUIRED')
+        result=compare.compare(old,new)
+        r['versions'].append(dict(task_id=new_task_id,view_sha256=nv.sha256,revisions=nv.value['revisions']));r['comparisons'].append(dict(old_task_id=old['id'],new_task_id=new['id'],**result))
+        event(r,'manual_rereview','Explicit user action linked independently frozen tasks and source-based comparisons. No model, publication or comment modification.');put(db,r)
+        for d in rows(db,'draft',r['id']):
+            if d['review_id']==r['id'] and not d.get('intent_id') and d.get('confirmation'):
+                event(d,'version_changed','New frozen review version invalidated the old confirmation.',previous_confirmation=d['confirmation'])
+                d.update(confirmation=None,approval=None,status='DRAFT');put(db,d)
 
     def rereview(self,review_id,new_task_id,observed=None):
         """Link an incremental frozen version and check every sent comment's anchor against it.
 
         observed is an optional read-only remote listing (LiveGitHub.read) recorded next to the
-        local anchor result. Nothing is sent, moved or edited."""
-        self.increment(review_id,new_task_id)
+        local anchor result. Nothing is sent, moved or edited. The predecessor check, the link,
+        the confirmation invalidation and the stored result share one lock and one transaction:
+        a refused re-review changes nothing."""
+        task_checked(self.store,new_task_id)
         with self.store.launch_lock(),self.store.transaction() as db:
             r=get(db,review_id,'review')
             done=next((x for x in r.get('rereviews',[]) if x['new_task_id']==new_task_id),None)
@@ -242,11 +248,16 @@ class Service:
                     done['observed_remote']=True
                     event(r,'remote_reobserved','Read-only remote comment state refreshed for an existing re-review.',new_task_id=new_task_id);put(db,r)
             else:
-                ids=[v['task_id'] for v in r['versions']];index=ids.index(new_task_id)
+                ids=[v['task_id'] for v in r['versions']]
+                linked=new_task_id in ids
+                index=ids.index(new_task_id) if linked else len(ids)
                 if index==0:raise ValueError('REREVIEW_PREDECESSOR_REQUIRED')
                 # Re-reviews run in version order: a later mapping is never computed without its
                 # predecessor's result, so no stored result has to be recomputed afterwards.
+                # Checked before anything is linked or written.
                 if index>1 and not any(x['new_task_id']==ids[index-1] for x in r.get('rereviews',[])):raise ValueError('REREVIEW_PREDECESSOR_RESULT_REQUIRED')
+                if not linked:
+                    self.link(db,r,new_task_id);ids.append(new_task_id)
                 old_id=ids[index-1];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
                 sends=rows(db,'send',review_id)
                 prior=[x for x in r.get('rereviews',[]) if x['new_task_id'] in ids[:index]]

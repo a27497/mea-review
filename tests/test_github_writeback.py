@@ -695,6 +695,91 @@ class WritebackTests(unittest.TestCase):
             self.s.draft(self.r['id'], t3['id'], t3['candidates'][0]['id'])
         self.assertEqual(self.posts(), 1)
 
+    # ---- M3 closeout round 3 -------------------------------------------------------------------
+
+    def records(self):
+        with self.store.connection() as db:
+            return sorted(db.execute('select id, doc from human_records').fetchall())
+
+    def test_refused_rereview_of_an_unlinked_version_changes_nothing(self):
+        first = self.sent()
+        rid = self.r['id']
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-refused-2'))
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-refused-3'))
+        # v2 is linked without a re-review result, and a v2 draft holds a live confirmation.
+        self.s.increment(rid, t2['id'])
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        d2 = self.s.draft(rid, t2['id'], t2['candidates'][0]['id'])
+        self.approve(draft=d2)
+        self.fake.push(H3, {'quota.py': diff(BASE, V3_REPLACE_AGAIN)})
+        before = self.records()
+        # v3 is not linked yet: both the CLI and the service refuse it before linking anything.
+        code, printed = self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])
+        self.assertEqual((code, 'REREVIEW_PREDECESSOR_RESULT_REQUIRED' in printed), (2, True))
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_PREDECESSOR_RESULT_REQUIRED'):
+            self.s.rereview(rid, t3['id'])
+        self.assertEqual(self.records(), before)
+        r = self.s.open(rid)
+        d = next(x for x in r['drafts'] if x['id'] == d2['id'])
+        self.assertEqual(([v['task_id'] for v in r['versions']], len(r['comparisons']), r.get('rereviews', [])),
+                         ([self.t1['id'], t2['id']], 1, []))
+        self.assertEqual(d['status'], self.s.remote.confirmed)
+        self.assertIsNotNone(d['confirmation'])
+        self.assertIsNotNone(d['approval'])
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t3['id'], '--candidate', t3['candidates'][0]['id'])
+        self.assertEqual((code, 'REVIEW_VERSION_NOT_LINKED' in printed), (2, True))
+        # In order, v3 is linked, the old confirmation is cleared and the result is stored together.
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        r = self.s.open(rid)
+        d = next(x for x in r['drafts'] if x['id'] == d2['id'])
+        self.assertEqual(([v['task_id'] for v in r['versions']], len(r['comparisons']), [x['new_task_id'] for x in r['rereviews']]),
+                         ([self.t1['id'], t2['id'], t3['id']], 2, [t2['id'], t3['id']]))
+        self.assertEqual((d['status'], d['confirmation'], d['approval']), ('DRAFT', None, None))
+        self.assertEqual([c['status'] for c in r['rereviews'][-1]['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        self.assertEqual(self.posts(), 1)
+
+    def test_omitted_rename_keeps_the_replacement_region_unknown(self):
+        first = self.sent()
+        rid = self.r['id']
+        h4 = '4' * 40
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-omit-2'))
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        # v3: an incomplete listing that omits the rename quota.py -> renamed_quota.py.
+        partial = snapshot(H2, H3, 'def quota():\n    return 5\n', 'def quota():\n    return 6\n', 'm4-omit-3')
+        partial['files'][0].update(path='independent.py', base_path='independent.py')
+        partial['scope'].update(complete_listing=False, reported_changed_files=3)
+        t3 = offline_task(self.store, partial)
+        self.fake.push(H3, {'renamed_quota.py': diff(BASE, V2_REPLACE)})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        after_v3 = self.s.open(rid)['rereviews'][-1]['comments'][0]
+        # v4: a complete listing that changes the replacement region under the new name.
+        latest = snapshot(H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-omit-4')
+        latest['files'][0].update(path='renamed_quota.py', base_path='renamed_quota.py')
+        latest['files'][1]['sides'] = {name: side(CALLER.replace('from quota', 'from renamed_quota')) for name in ('head', 'base')}
+        t4 = offline_task(self.store, latest)
+        self.assertEqual((t4['reason'], [c['change']['path'] for c in t4['candidates']]), ('HYPOTHESIS_SUPPORTED', ['renamed_quota.py']))
+        self.fake.push(h4, {'renamed_quota.py': diff(BASE, V3_REPLACE_AGAIN)})
+        # A draft made after linking v4 but before its re-review.
+        self.s.increment(rid, t4['id'])
+        out = self.root / 'draft.json'
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'], out=out)
+        self.assertEqual(code, 0, printed)
+        draft_id = json.loads(out.read_bytes())['draft_id']  # local command: no GitHub request log
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t4['id'])[0], 0)
+        check = self.s.open(rid)['rereviews'][-1]
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'])
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
+        code, printed = self.run_cli('preview', '--draft', draft_id)
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
+        self.assertEqual([c['status'] for c in check['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        # The marker keeps the last known path and an unknown lineage through v3 and v4.
+        for row in (after_v3, check['comments'][0]):
+            self.assertEqual((row['status'], row['replaced_region_unresolved']), ('OUTDATED', dict(
+                path='quota.py', lineage='UNKNOWN', reason='Increment file listing is incomplete; the earlier replacement lines cannot be mapped.')))
+        self.assertEqual(self.posts(), 1)
+
 
 class AnchorMappingTests(unittest.TestCase):
     def test_line_mapping_through_hunks(self):
@@ -796,6 +881,33 @@ class AnchorMappingTests(unittest.TestCase):
         removed = dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))
         row, statuses = run([removed], 'a.py')
         self.assertEqual((row.get('replaced_region_unresolved'), statuses), (None, ['NEW']))
+
+    def test_unknown_lineage_blocks_every_head_file_until_a_listing_names_the_last_path(self):
+        old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
+                                                  replaced_region_unresolved=dict(path='a.py', reason='earlier', lineage='UNKNOWN'))])]
+        def run(files, base=H3, complete=True):
+            new = dict(view=dict(revisions=dict(base=base, head='4' * 40), files=files, coverage=dict(complete_listing=complete)),
+                       candidates=[dict(id='c1', change=dict(path='b.py', line=7, side='head', revision='4' * 40))])
+            result = rereview.check(old, new, [send], None, prior)
+            return result['comments'][0].get('replaced_region_unresolved'), [c['status'] for c in result['candidates']]
+        other = dict(path='b.py', base_path='b.py', status='modified', patch='@@ -7 +7 @@\n-x\n+y\n', sides=dict(head=dict()))
+        # A complete listing that does not name a.py: it may be b.py now, so b.py stays blocked.
+        marker, statuses = run([other])
+        self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # A non-linear step keeps the lineage unknown.
+        marker, statuses = run([other], base=H2)
+        self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # A listing that names a.py by its last path makes the lineage known again; b.py is then unrelated.
+        named = dict(path='a.py', base_path='a.py', status='modified', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict()))
+        marker, statuses = run([named, other])
+        self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'KNOWN', ['NEW']))
+        # A known marker turns unknown when a later listing is incomplete and does not name the file.
+        prior[0]['comments'][0]['replaced_region_unresolved'] = dict(path='a.py', reason='earlier')
+        marker, statuses = run([other], complete=False)
+        self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
 
     def test_copies_incomplete_listings_and_missing_sources_are_not_guessed(self):
         copy_entry = dict(path='b.py', base_path='a.py', status='copied', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(head=dict()))

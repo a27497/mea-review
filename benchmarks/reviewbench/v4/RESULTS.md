@@ -112,7 +112,8 @@ The rules are deterministic, and no model was used.
 | NEVER_SEEN / not in input | 0 | 0 |
 | UNDETERMINED | 0 | 0 |
 
-- All 33 defects (68 gold lines) sit on changed lines. All of them were in
+- The 33 defects have 68 gold lines: 66 added lines and 2 hunk context
+  lines. Each defect covers at least one changed line. All 68 lines were in
   the Agent's initial diff in each of the three repetitions.
 - In some repetition, Agent tools read the gold file for 32 defects and
   returned a gold line itself for 30.
@@ -129,11 +130,15 @@ The rules are deterministic, and no model was used.
   | Stopped (5 INVALID_MODEL_DECISION, 3 OUTPUT_BUDGET, 2 TOOL_NOT_ALLOWED) | 10 |
 
   6 of these tasks had another file's diff omitted from the first request.
-- The misses are therefore not retrieval failures of the commented line.
-  This rule cannot show whether the other context needed to recognise a
-  defect was seen. That context could be a callee in an unchanged file. A
-  reviewer comment always anchors on a diff line, so a gold line is visible
-  by construction once its diff fits the window.
+- What this shows is limited to the commented lines: every one was visible
+  in the first turn. The rule cannot show whether the cross-file evidence
+  needed to recognise a defect was available, for example a callee in an
+  unchanged file. A reviewer comment always anchors on a diff line, so a
+  gold line is visible by construction once its diff fits the window. The
+  data does not apportion the misses among missing context, candidate
+  validation, stop budgets and judge matching. The 33 are defects that both
+  groups missed; they say nothing about other defects or about the quality
+  difference between the groups.
 
 Per-defect rows stay in private storage.
 

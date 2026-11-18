@@ -189,8 +189,11 @@ inside the lines that replaced an outdated comment, or on a sent comment's
 mapped line, cannot be drafted. Those replacement lines are mapped through each
 later increment; when they cannot be mapped (incomplete listing, missing patch
 or head source), candidates in that file cannot be drafted in that or any later
-increment. Re-reviews run in version order: a version's re-review needs its
-predecessor's re-review first.
+increment. If an incomplete listing does not name that file, a rename may have
+been omitted, so no head-side candidate can be drafted or previewed until a later
+listing names the file by its last known path. Re-reviews run in version order:
+a version's re-review needs its predecessor's re-review first, and a refused
+re-review links nothing and leaves confirmations in place.
 
 The workbench shows confirmation, writeback and re-review state for these
 reviews. It has no live remote and cannot confirm or send a live draft.

@@ -489,6 +489,14 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     files = []
     null_sha = []
     used = 0
+    trees = []
+
+    def head_tree():
+        # One recursive tree read per capture, shared by null-SHA identity checks and context selection.
+        if not trees:
+            trees.append(c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree'))
+        return trees[0]
+
     for entry in listed:
         # previous_filename exists only for renames and copies (shape-checked for those).
         name, before = entry['filename'], entry.get('previous_filename') or entry['filename']
@@ -503,9 +511,14 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         status = entry['status'] if entry['status'] in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'} else 'changed'
         sides = {}
         if status != 'removed':
-            if entry['sha'] is None:
-                null_sha.append(name)  # Read at the pinned head; checked against its own Git blob.
-            source = fetch_source(c, name, head, 'head', entry['sha'])
+            expected = entry['sha']
+            if expected is None:
+                # Read at the pinned head. Its identity comes from the pinned tree entry when the tree lists the
+                # path: a symlink's contents response carries its target's blob, which the self-check accepts.
+                null_sha.append(name)
+                _, tree = head_tree()
+                expected = next((e['sha'] for e in (tree or {}).get('tree', []) if e['path'] == name and e['type'] == 'blob'), None)
+            source = fetch_source(c, name, head, 'head', expected)
             if source:
                 sides['head'] = source
         if status != 'added':
@@ -542,7 +555,7 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         report['context_selection'] = dict(status='NOT_REQUESTED', files=[])
     else:
         before_context = len(c.gaps)
-        response, tree = c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree')
+        response, tree = head_tree()
         if tree is None:
             if response is not None:  # A definitive 404/422: the pinned tree is not available.
                 c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')

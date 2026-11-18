@@ -162,7 +162,10 @@ def agent_batch(private, b, batch, out, ledger_path, ledger_cap, tags, config):
     ledger = provider.Ledger(ledger_path, ledger_cap)
     lines = []
     snaps = {s['slug']: load_eval(private, s) for s in batch}
-    scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}", inputs=[digest(v) for v in snaps.values()],
+    # An infrastructure rerun gets its own scope id, so its own store: it never reopens batch b1 of the
+    # original run (stored task, PHASE3_TASK_CAP) or overwrites that batch's scope file.
+    suffix = f"-x{tags['rerun']}" if tags.get('rerun') else ''
+    scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}{suffix}", inputs=[digest(v) for v in snaps.values()],
                  max_tasks=len(batch), max_requests=6 * len(batch), tool_profile=config['tool_profile'],
                  first_turn=config['first_turn'], approval=config['approval'], budget_usd=config['scope_budget_usd'],
                  task_budget=config['task_budget'])
@@ -223,6 +226,45 @@ def run_agent(private, rows, out, ledger, secret, tags, config):
                 print(json.dumps(line), flush=True)
 
 
+# Stops caused by transport or provider infrastructure, not by the model's answer. Only these (or a
+# missing output, e.g. a killed process) may be rerun; any other first result is the sample.
+INFRASTRUCTURE_STOPS = {'NO_RECEIPT', 'HTTP_ERROR', 'RESPONSE_BYTE_BOUND', 'CONNECTION_OR_RESPONSE_UNCERTAIN',
+                        'PROVIDER_HTTP_ERROR', 'PROVIDER_WORKER_NOT_READY', 'RECOVERY_UNCERTAIN', 'TRANSPORT', 'UNCERTAIN'}
+
+
+def infrastructure_stop(out, slug):
+    path = Path(out) / f'{slug}.json'
+    if not path.exists():
+        return True
+    result = read(path)
+    return result.get('status') != 'COMPLETED' and result.get('reason') in INFRASTRUCTURE_STOPS
+
+
+def supersede(out, slugs, rerun):
+    """Move earlier outputs of rerun slugs to superseded/<rerun>/ so billed first attempts stay on disk."""
+    out, moved = Path(out), []
+    target = out / 'superseded' / rerun
+    for slug in sorted(slugs):
+        for path in [out / f'{slug}.json', *sorted((out / 'raw').glob(f'{slug}.*'))]:
+            if path.exists():
+                dest = target / path.relative_to(out)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                path.rename(dest)
+                moved.append(str(dest.relative_to(out)))
+    return moved
+
+
+def check_preregistration(plan, exclusions_path):
+    """Apply the pre-registered sample rules (exclusions, duplicates, cross-set repositories, bounds) before a holdout run."""
+    exclusions_path = Path(exclusions_path)
+    if not exclusions_path.exists() or planning.file_sha256(exclusions_path) != plan['exclusions']['sha256']:
+        raise SystemExit('BLOCKED: the exclusion list must match the SHA-256 recorded in PLAN.json')
+    try:
+        planning.check_samples(plan['samples'], read(exclusions_path))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise SystemExit('BLOCKED: pre-registration check failed: ' + str(exc)) from None
+
+
 def cmd_run(args):
     plan, plan_sha = planning.load_plan(args.plan, args.plan_sha256)
     head, dirty = git_state()
@@ -234,14 +276,26 @@ def cmd_run(args):
     out = Path(args.runs) / args.set / args.round / args.arm / f'rep{args.rep}'
     if args.set == 'holdout':
         planning.holdout_admission(plan, plan_sha, read(args.approval) if args.approval else None)
+        check_preregistration(plan, args.exclusions or Path(args.private) / 'selection' / 'exclusions.json')
         if head != plan['frozen']['code_sha'] or dirty:
             raise SystemExit('BLOCKED: holdout runs need the frozen code SHA and a clean mea/benchmarks tree')
+    if args.arm != 'static' and not args.confirm_real_provider:
+        raise SystemExit('BLOCKED: --confirm-real-provider is required for billed DeepSeek calls')
     only = set(args.only.split(',')) if args.only else None
     if out.exists() and any(out.glob('*.json')):
         if not (only and args.reason):
             raise SystemExit('BLOCKED: this arm/rep already ran; an infrastructure rerun needs --only SLUGS and --reason')
+        unknown = sorted(only - {s['slug'] for s in plan['samples'][args.set]})
+        if unknown:
+            raise SystemExit('BLOCKED: --only names slugs outside the set: ' + ','.join(unknown))
+        kept = sorted(slug for slug in only if not infrastructure_stop(out, slug))
+        if kept:
+            raise SystemExit('BLOCKED: a rerun only replaces a missing output or an infrastructure stop; kept: ' + ','.join(kept))
+        rerun = digest(dict(at=time.time(), only=sorted(only), reason=args.reason))[:8]
+        moved = supersede(out, only, rerun)
+        tags['rerun'] = rerun
         with (out / 'reruns.jsonl').open('a') as f:
-            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason)) + '\n')
+            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason, rerun=rerun, superseded=moved)) + '\n')
     out.mkdir(parents=True, exist_ok=True)
     rows = samples(plan, args.set, only)
     started = time.time()
@@ -316,7 +370,11 @@ def cmd_judge(args):
     def judge_one(pr):
         body = judging.judge_request(pr)
         reserved = provider.reservation(judging.JUDGE_MODEL, len(canonical(body)), judging.JUDGE_MAX_TOKENS)
-        entry = ledger.admit(reserved, arm='judge', slug=pr['slug'], set=args.set, round=args.round)
+        try:
+            entry = ledger.admit(reserved, arm='judge', slug=pr['slug'], set=args.set, round=args.round)
+        except ValueError as exc:
+            # Request or ledger cap reached: nothing was sent. The loop keeps writing finished decisions.
+            return pr, None, 'JUDGE_BLOCKED:' + str(exc), {}
         receipt = provider.judge_call(body, secret)
         price = provider.cost(judging.JUDGE_MODEL, receipt.get('usage'))
         ledger.record(entry, at=time.time(), arm='judge', slug=pr['slug'], model=judging.JUDGE_MODEL, usage=receipt.get('usage'),
@@ -466,6 +524,7 @@ def main(argv=None):
             p.add_argument('--rep', type=int, required=True)
             p.add_argument('--approval')
             p.add_argument('--reason')
+            p.add_argument('--exclusions', type=Path, help='exclusion list bound by PLAN.json (default PRIVATE/selection/exclusions.json)')
         if name == 'agreement':
             p.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)

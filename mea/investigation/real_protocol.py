@@ -74,6 +74,9 @@ FIRST_TURN_NO_PR_TEXT='first-turn-diff-30k-no-pr-text-v1'
 # M3 dev round 2: the same window plus a planning note (cross-file tools before paging, a reserved
 # finish request and short finish fields), declared from dev round 1 observations.
 FIRST_TURN_NO_PR_TEXT_PLANNED='first-turn-diff-30k-no-pr-text-planned-v1'
+# Known issue (CodeRabbit, PR #7): the note's first sentence is wrong when a patch does not fit the
+# 30,000-byte window and is omitted from initial_diffs. The text is part of the frozen M3 holdout
+# configuration and stays unchanged; a later profile should tell the model to check omission markers.
 PLANNING_NOTE='''
 The initial diffs show every changed line. Before paging through a file, use related_files on a changed file and
 find_symbol or references on a changed definition to reach its callers and tests. Read at most two pages of one file

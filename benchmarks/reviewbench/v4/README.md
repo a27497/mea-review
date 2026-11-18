@@ -72,7 +72,12 @@ reserve each request's peak bound before it is sent, so concurrent workers
 cannot pass its cap together. Recorded task times start when the worker
 sends, so they exclude queueing; each result records the concurrency. A holdout run also needs a FROZEN PLAN.json, a coordinator
 approval naming its SHA-256, the frozen code SHA and a clean `mea/` and
-`benchmarks/` tree. A completed arm and repetition cannot run again. An
-infrastructure rerun names `--only SLUGS` and `--reason`, which is logged.
+`benchmarks/` tree. Before a holdout run, the pre-registered sample rules
+(`plan.check_samples`) are applied to PLAN.json with the exclusion list whose
+SHA-256 PLAN.json records. A completed arm and repetition cannot run again. An
+infrastructure rerun names `--only SLUGS` and `--reason`, which is logged. It
+only replaces a missing output or a transport or provider stop; the earlier
+output and receipt move to `superseded/<rerun>/`. An Agent rerun gets its own
+scope id and store.
 The cost ledger prices reported usage at the official list price, keeps a
 peak-rate bound and refuses a request above USD 10 or above the PLAN cap.

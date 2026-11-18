@@ -147,10 +147,10 @@ def parse_judgement(content, packet_pr):
         if not isinstance(d, dict) or set(d) != {'candidate_id', 'verdict', 'gold_id', 'novel_valid', 'reason'}:
             raise ValueError('JUDGE_DECISION_FIELDS')
         cid = d['candidate_id']
-        if cid not in expected or cid in out:
+        if not isinstance(cid, str) or cid not in expected or cid in out:
             raise ValueError('JUDGE_CANDIDATE_SET')
         if d['verdict'] == 'MATCH':
-            if d['gold_id'] not in gold or d['novel_valid'] is not None:
+            if not isinstance(d['gold_id'], str) or d['gold_id'] not in gold or d['novel_valid'] is not None:
                 raise ValueError('JUDGE_MATCH_GOLD')
         elif d['verdict'] in ('FALSE_POSITIVE', 'UNDETERMINED'):
             if d['gold_id'] is not None:

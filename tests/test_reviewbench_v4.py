@@ -83,6 +83,10 @@ class ScoringTests(unittest.TestCase):
     def test_stop_rule_at_ten_points(self):
         self.assertEqual(score.stop_decision(0.40, 0.31)['outcome'], 'NEGATIVE_RESULT_STOP')
         self.assertEqual(score.stop_decision(0.40, 0.30)['outcome'], 'THRESHOLD_MET')
+        # Inclusive despite float subtraction: 0.3 - 0.2 is 0.09999999999999998.
+        self.assertLess(0.3 - 0.2, score.THRESHOLD)
+        self.assertEqual(score.stop_decision(0.3, 0.2)['outcome'], 'THRESHOLD_MET')
+        self.assertEqual(score.stop_decision(0.3, 0.2000001)['outcome'], 'NEGATIVE_RESULT_STOP')
         self.assertEqual(score.stop_decision(0.20, 0.35)['outcome'], 'NEGATIVE_RESULT_STOP')
 
 
@@ -147,6 +151,10 @@ class BlindPacketTests(unittest.TestCase):
                 judge.parse_judgement(json.dumps(bad), pr)
         with self.assertRaisesRegex(ValueError, 'JUDGE_JSON'):
             judge.parse_judgement('not json', pr)
+        # Unhashable ids are the documented ValueError, not a TypeError that stops the judge loop.
+        for field, bad in [('candidate_id', [ids[0]]), ('candidate_id', {'id': ids[0]}), ('gold_id', ['s:D1']), ('gold_id', {'g': 1})]:
+            with self.subTest(field=field, bad=bad), self.assertRaisesRegex(ValueError, 'JUDGE_'):
+                judge.parse_judgement(json.dumps(dict(decisions=[dict(good['decisions'][0], **{field: bad}), good['decisions'][1]])), pr)
 
     def test_agreement_sample_is_seeded_blind_and_scored(self):
         prs = []
@@ -406,9 +414,6 @@ class DirectArmTests(unittest.TestCase):
             self.assertEqual(len([e for e in ledger.entries() if e['kind'] == 'reserve']), admitted)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class OperatorFlowTests(unittest.TestCase):
     """End-to-end m3.py flow on one synthetic sample with fake transports: run, judge, score, holdout guard."""
@@ -540,23 +545,104 @@ class OperatorFlowTests(unittest.TestCase):
         entries = provider.Ledger(ledger, 10 ** 9).entries()
         self.assertEqual(sorted(e['kind'] for e in entries), ['reserve', 'reserve', 'settle', 'settle'])
 
+    def frozen_holdout(self, exclusions=None):
+        row = dict(self.plan['samples']['holdout'][0], license='MIT', changed_files=1, changed_lines=2, gold_defects=1)
+        listing = self.private / 'selection' / 'exclusions.json'
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        listing.write_bytes(canonical(exclusions or dict(schema=planning.EXCLUSIONS_SCHEMA, repositories=['other/repo'], pull_requests=[])))
+        frozen = dict(self.plan, status='FROZEN', samples=dict(dev=[], holdout=[row]), exclusions=dict(sha256=planning.file_sha256(listing)))
+        self.plan_path.write_bytes(canonical(frozen))
+        approval = Path(self.temp.name) / 'approval.json'
+        approval.write_bytes(canonical(dict(plan_sha256=planning.file_sha256(self.plan_path), coordinator_reply='msg-1')))
+        return approval, listing
+
     def test_holdout_requires_frozen_plan_approval_and_code_sha(self):
         common = ['--plan', str(self.plan_path), '--set', 'holdout', '--round', 'final', '--runs', str(self.runs), '--arm', 'static', '--rep', '1']
         with self.assertRaisesRegex(ValueError, 'PLAN_NOT_FROZEN'):
             self.cli('run', *common)
         frozen = dict(self.plan, status='FROZEN')
         self.plan_path.write_bytes(canonical(frozen))
-        sha = planning.file_sha256(self.plan_path)
         with self.assertRaisesRegex(ValueError, 'HOLDOUT_APPROVAL_REQUIRED'):
             self.cli('run', *common)
-        approval = Path(self.temp.name) / 'approval.json'
-        approval.write_bytes(canonical(dict(plan_sha256=sha, coordinator_reply='msg-1')))
-        with patch.object(self.m3, 'git_state', lambda: ('e' * 40, False)), self.assertRaisesRegex(SystemExit, 'frozen code SHA'):
-            self.cli('run', *common, '--approval', str(approval))
-        with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
-            self.cli('run', *common, '--approval', str(approval))
-            with self.assertRaisesRegex(SystemExit, 'already ran'):
+        approval, listing = self.frozen_holdout()
+        with patch.object(planning, 'MIN_HOLDOUT', 1):
+            with patch.object(self.m3, 'git_state', lambda: ('e' * 40, False)), self.assertRaisesRegex(SystemExit, 'frozen code SHA'):
                 self.cli('run', *common, '--approval', str(approval))
-            self.cli('run', *common, '--approval', str(approval), '--only', 'owned--fixture--1', '--reason', 'unit test infra rerun')
-        reruns = (self.runs / 'holdout' / 'final' / 'static' / 'rep1' / 'reruns.jsonl').read_text()
-        self.assertIn('unit test infra rerun', reruns)
+            with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+                self.cli('run', *common, '--approval', str(approval))
+                with self.assertRaisesRegex(SystemExit, 'already ran'):
+                    self.cli('run', *common, '--approval', str(approval))
+                # A completed first result is the sample; only an infrastructure stop or a missing output reruns.
+                with self.assertRaisesRegex(SystemExit, 'infrastructure stop; kept: owned--fixture--1'):
+                    self.cli('run', *common, '--approval', str(approval), '--only', 'owned--fixture--1', '--reason', 'not infra')
+                with self.assertRaisesRegex(SystemExit, 'outside the set'):
+                    self.cli('run', *common, '--approval', str(approval), '--only', 'owned--fixture--9', '--reason', 'typo')
+                out = self.runs / 'holdout' / 'final' / 'static' / 'rep1'
+                first = json.loads((out / 'owned--fixture--1.json').read_text())
+                stopped = dict(first, status='STOPPED', reason='CONNECTION_OR_RESPONSE_UNCERTAIN')
+                (out / 'owned--fixture--1.json').write_bytes(canonical(stopped))
+                self.cli('run', *common, '--approval', str(approval), '--only', 'owned--fixture--1', '--reason', 'unit test infra rerun')
+        reruns = [json.loads(l) for l in (out / 'reruns.jsonl').read_text().splitlines()]
+        self.assertEqual(len(reruns), 1)
+        self.assertEqual(reruns[0]['reason'], 'unit test infra rerun')
+        # The billed first attempt is kept under superseded/<rerun>/, and the rerun writes a new output.
+        self.assertEqual(reruns[0]['superseded'], [f"superseded/{reruns[0]['rerun']}/owned--fixture--1.json"])
+        self.assertEqual(json.loads((out / reruns[0]['superseded'][0]).read_text()), stopped)
+        self.assertEqual(json.loads((out / 'owned--fixture--1.json').read_text())['status'], first['status'])
+
+    def test_holdout_applies_the_preregistered_sample_checks(self):
+        common = ['--plan', str(self.plan_path), '--set', 'holdout', '--round', 'final', '--runs', str(self.runs), '--arm', 'static', '--rep', '1']
+        approval, listing = self.frozen_holdout()
+        with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+            with self.assertRaisesRegex(SystemExit, 'HOLDOUT_TOO_SMALL'):
+                self.cli('run', *common, '--approval', str(approval))
+            listing.write_bytes(listing.read_bytes() + b' ')
+            with patch.object(planning, 'MIN_HOLDOUT', 1), self.assertRaisesRegex(SystemExit, 'SHA-256 recorded in PLAN.json'):
+                self.cli('run', *common, '--approval', str(approval))
+            approval, listing = self.frozen_holdout(dict(schema=planning.EXCLUSIONS_SCHEMA, repositories=['owned/fixture'], pull_requests=[]))
+            with patch.object(planning, 'MIN_HOLDOUT', 1), self.assertRaisesRegex(SystemExit, 'EXCLUDED_REPOSITORY:owned/fixture#1'):
+                self.cli('run', *common, '--approval', str(approval))
+        self.assertFalse((self.runs / 'holdout').exists())
+
+    def test_agent_rerun_gets_its_own_scope_and_store(self):
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        snapshot = arms.evaluation_snapshot(value())
+        rows = [dict(slug='owned--fixture--1', input_sha256=digest(snapshot))]
+        out = self.runs / 'dev' / 'p' / 'agent' / 'rep1'
+        ledger = self.private / 'ledger.jsonl'
+        tags = dict(set='dev', round='p', rep=1, plan_sha256='0' * 64, code_sha='f' * 40, workers=1)
+        with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context('spawn'), initializer=fake_provider) as pool:
+            first = pool.submit(self.m3.agent_batch, str(self.private), 1, rows, out, ledger, 10 ** 9, tags, self.plan['arms']['agent']).result()
+            again = pool.submit(self.m3.agent_batch, str(self.private), 1, rows, out, ledger, 10 ** 9, dict(tags, rerun='0a1b2c3d'),
+                                self.plan['arms']['agent']).result()
+        self.assertEqual([first[0]['requests'], again[0]['requests']], [1, 1])  # The rerun sent its own request.
+        self.assertEqual(sorted(p.name for p in (self.private / 'stores').iterdir()), ['mea-live-m3-dev-p-r1-b1', 'mea-live-m3-dev-p-r1-b1-x0a1b2c3d'])
+        self.assertEqual(sorted(p.name for p in (out / 'scopes').iterdir()), ['mea-live-m3-dev-p-r1-b1-x0a1b2c3d.json', 'mea-live-m3-dev-p-r1-b1.json'])
+
+    def test_judge_admission_refusal_keeps_the_loop_and_writes_decisions(self):
+        from mea.investigation import deepseek
+
+        class Conn(FakeConnection):
+            def __init__(inner):
+                super().__init__(b'')
+
+            def request(inner, method, path, body, headers):
+                inner.raw = self.finish_body(json.loads(body))
+        common = ['--plan', str(self.plan_path), '--set', 'dev', '--round', 'rj', '--runs', str(self.runs)]
+        calls = []
+        with patch.object(deepseek, 'read_key', lambda *a: 'sk-' + 'a' * 32), \
+                patch.object(self.m3.provider, 'direct_call', lambda body, secret, validate: wire.call(body, secret, connect=Conn(), validate=validate)), \
+                patch.object(self.m3.provider, 'judge_call', lambda *a, **k: calls.append(a)), patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+            self.cli('run', *common, '--arm', 'direct', '--rep', '1', '--confirm-real-provider')
+            self.plan['budget']['ledger_cap_usd'] = 0  # Every judge admission is refused by the ledger cap.
+            self.plan_path.write_bytes(canonical(self.plan))
+            printed = self.cli('judge', *common, '--confirm-real-provider')
+        self.assertIn('JUDGE_BLOCKED', printed)
+        self.assertEqual(calls, [])
+        decisions = json.loads((self.runs / 'dev' / 'rj' / 'judge' / 'decisions.json').read_text())
+        self.assertEqual(decisions['decisions'], {})
+
+
+if __name__ == '__main__':
+    unittest.main()

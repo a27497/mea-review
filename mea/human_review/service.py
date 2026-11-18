@@ -55,7 +55,18 @@ class Service:
                 for row in check['candidates']:
                     if row['change']['side']=='head' and row['status']=='NEW':
                         row.update(status='LINEAGE_UNKNOWN',reason='Head-side drafting is blocked for a legacy re-review.')
-        value['tasks']=[self.store.get(v['task_id']) for v in value['versions']]
+        value['tasks']=[]
+        for version in value['versions']:
+            task=self.store.get(version['task_id'])
+            value['tasks'].append(task)
+            version['candidate_source']=task['mode']
+            # Live review workspaces use the attended CLI when opened in the workbench.
+            if not self.live and value['mode']=='LIVE_GITHUB_REVIEW':
+                version['writeback_mode']='LIVE_GITHUB'
+            else:
+                target={k:task['pr'][k] for k in ('repository','number')}
+                eligible=self.admitted(dict(target=target,mock_admitted=not self.live and demo.registered(task)))
+                version['writeback_mode']=self.remote.mode if eligible else 'LOCAL_PREVIEW_ONLY'
         value['live_publish']='COMMAND_LINE_ALLOWLIST_ONLY' if self.live else 'DISABLED_NO_AUTHORIZED_REPOSITORY_OR_CREDENTIALS'
         return value
 

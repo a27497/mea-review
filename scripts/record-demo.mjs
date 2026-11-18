@@ -97,6 +97,13 @@ async function compare(pair, status) {
   await expect(rail().getByText(status, {exact: true}).first()).toBeVisible();
 }
 
+async function reviewProvenance(source) {
+  for (const section of [p.locator('#intro'), rail().locator('.candidate-provenance')]) {
+    await expect(section.locator('.candidate-source')).toHaveText('Candidate source: ' + source);
+    await expect(section.locator('.writeback-mode')).toHaveText('Writeback: Mock (loopback)');
+  }
+}
+
 try {
   await card('A code review agent on frozen PR snapshots',
     ['Captures a pull request read-only, investigates it with bounded read-only tools,',
@@ -139,9 +146,10 @@ try {
     await caption('REAL', 'The candidate passed citation checks against lines returned to the model. A human decides whether the issue is real.');
     await cand.click(); await pause(4500);
     await btn('Open human review').scrollIntoViewIfNeeded();
-    await btn('Open human review').click(); await pause(2500);
-    await caption('REAL', 'The real candidate opens for human review. This synthetic snapshot supports local preview.');
-    await pause(4000);
+    await btn('Open human review').click();
+    await reviewProvenance('Real model (DeepSeek)');
+    await caption('REAL', 'DeepSeek generated this candidate. The synthetic snapshot uses Mock writeback through the local loopback.');
+    await pause(6500);
   } else {
     const base = await serve(path.join(work, 'offline-store')); allowed.add(base);
     await p.goto(base);
@@ -160,7 +168,8 @@ try {
   await p.goto(base);
   await pause(1200);
   await guide('Human review');
-  await caption('MOCK', 'Owned Mock fixture: quota() now returns None and the caller subtracts from it.');
+  await reviewProvenance('Deterministic Mock');
+  await caption('MOCK', 'The deterministic Mock finds a candidate on a synthetic snapshot. This workspace also uses Mock writeback.');
   await pause(3500);
   await btn('Open candidate · L2').click(); await pause(1200);
   await rail().getByRole('button', {name: /Select candidate/}).click(); await pause(1500);
@@ -217,7 +226,7 @@ try {
   await btn('Re-review', p.getByRole('navigation', {name: 'Review cases'})).click(); await pause(1000);
   await compare(/v3\s+→\s+v4/, 'OUTDATED');
   await pause(1500);
-  await caption('MOCK', 'v3 → v4 changes the commented line: OUTDATED. The comment is never moved to a new line automatically.');
+  await caption('MOCK', 'The old candidate anchor is OUTDATED in v4 because the workbench cannot map it to the new revision.');
   await pause(5500);
 
   await card('What it measured',

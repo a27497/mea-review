@@ -4,7 +4,7 @@ MEA Review is a code review agent that investigates frozen pull requests using b
 
 [Watch the workbench demo](docs/demo/mea-review.mp4?raw=true) · [Start locally](#start-the-workbench) · [Connect an MCP client](#read-only-mcp)
 
-[![MEA Review showing a draft comment and its frozen diff](docs/demo/preview.jpg)](docs/demo/mea-review.mp4?raw=true)
+[![MEA Review showing the candidate source, writeback mode and frozen diff](docs/demo/preview.jpg)](docs/demo/mea-review.mp4?raw=true)
 
 ```mermaid
 flowchart LR

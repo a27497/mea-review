@@ -98,6 +98,7 @@ package.json	New	Batch 1	Expose separate Review v3 browser verification
 scripts/mcp-roundtrip.mjs	New	M5	Official SDK interoperability check on an owned snapshot
 scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
 scripts/record-demo.mjs	New	M5	Synthetic workbench tour and optional saved Real model trace capture
+scripts/review-provenance-check.mjs	New	M5	Synthetic browser regression for candidate origin and writeback transport
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
 tests/fake_github.py	New	M4	Loopback fake of the GitHub REST endpoints used by the writeback lane; synthetic data
 tests/github_fixtures.py	New	M2	Self-owned in-memory GitHub REST fixture

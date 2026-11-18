@@ -19,8 +19,9 @@ import scoring  # noqa: E402
 VERDICTS = ('MATCH', 'FALSE_POSITIVE', 'UNDETERMINED')
 THRESHOLD = 0.10
 # The ten-point rule is inclusive. F1 differences are float subtractions (0.3 - 0.2 is
-# 0.09999999999999998), so a gap within this tolerance of the threshold meets it.
-TOLERANCE = 1e-9
+# 0.09999999999999998, an error near 1e-17), so a gap within this rounding tolerance of the
+# threshold meets it. Gaps from F1 values on these sample sizes differ from 0.10 by far more.
+TOLERANCE = 1e-12
 
 
 def dedupe_gold(slug, comments):

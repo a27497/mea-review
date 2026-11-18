@@ -10,11 +10,13 @@ per request, no retries. Private inputs and outputs live under --private (never 
   agreement-packet / agreement               Codex consistency sample (holdout)
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -259,10 +261,12 @@ def supersede(out, slugs, rerun):
 def check_preregistration(plan, exclusions_path):
     """Apply the pre-registered sample rules (exclusions, duplicates, cross-set repositories, bounds) before a holdout run."""
     exclusions_path = Path(exclusions_path)
-    if not exclusions_path.exists() or planning.file_sha256(exclusions_path) != plan['exclusions']['sha256']:
+    raw = exclusions_path.read_bytes() if exclusions_path.exists() else None
+    # The same bytes are hashed and decoded, so the checked rules are the approved ones.
+    if raw is None or hashlib.sha256(raw).hexdigest() != plan['exclusions']['sha256']:
         raise SystemExit('BLOCKED: the exclusion list must match the SHA-256 recorded in PLAN.json')
     try:
-        planning.check_samples(plan['samples'], read(exclusions_path))
+        planning.check_samples(plan['samples'], decode(raw, limit=50_000_000))
     except (ValueError, KeyError, TypeError) as exc:
         raise SystemExit('BLOCKED: pre-registration check failed: ' + str(exc)) from None
 
@@ -284,39 +288,92 @@ def cmd_run(args):
     if args.arm != 'static' and not args.confirm_real_provider:
         raise SystemExit('BLOCKED: --confirm-real-provider is required for billed DeepSeek calls')
     only = set(args.only.split(',')) if args.only else None
-    if out.exists() and any(out.glob('*.json')):
-        if not (only and args.reason):
-            raise SystemExit('BLOCKED: this arm/rep already ran; an infrastructure rerun needs --only SLUGS and --reason')
+    if only:
         unknown = sorted(only - {s['slug'] for s in plan['samples'][args.set]})
         if unknown:
             raise SystemExit('BLOCKED: --only names slugs outside the set: ' + ','.join(unknown))
+    with arm_lock(out):
+        run_locked(args, plan, plan_sha, head, dirty, tags, out, only)
+
+
+@contextmanager
+def arm_lock(out):
+    """One invocation per arm and repetition at a time; held until the results are in place."""
+    import fcntl
+    path = out.parent / f'.{out.name}.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SystemExit('BLOCKED: another run holds this arm and repetition') from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def run_locked(args, plan, plan_sha, head, dirty, tags, out, only):
+    # A directory with results or a recorded attempt has been dispatched before; even a first attempt
+    # that wrote nothing may have created a store, so any further run is a rerun with its own scope.
+    attempted = out.exists() and (any(out.glob('*.json')) or (out / 'attempts.jsonl').exists())
+    target, rerun = out, None
+    if attempted:
+        if not (only and args.reason):
+            raise SystemExit('BLOCKED: this arm/rep already ran; an infrastructure rerun needs --only SLUGS and --reason')
+        if (out.parent.parent / 'judge' / 'packet.json').exists():
+            raise SystemExit('BLOCKED: this round is already judged; rerun in a new round directory')
         kept = sorted(slug for slug in only if not infrastructure_stop(out, slug))
         if kept:
             raise SystemExit('BLOCKED: a rerun only replaces a missing output or an infrastructure stop; kept: ' + ','.join(kept))
         rerun = digest(dict(at=time.time(), only=sorted(only), reason=args.reason))[:8]
-        moved = supersede(out, only, rerun)
         tags['rerun'] = rerun
-        with (out / 'reruns.jsonl').open('a') as f:
-            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason, rerun=rerun, superseded=moved)) + '\n')
+        target = out / 'staging' / rerun  # The active results stay in place until the replacement is complete.
     out.mkdir(parents=True, exist_ok=True)
+    with (out / 'attempts.jsonl').open('a') as f:
+        f.write(json.dumps(dict(at=time.time(), only=sorted(only) if only else None, reason=args.reason, rerun=rerun,
+                                code_sha=head)) + '\n')
     rows = samples(plan, args.set, only)
     started = time.time()
     if args.arm == 'static':
-        run_static(args.private, rows, out)
+        run_static(args.private, rows, target)
     else:
-        if not args.confirm_real_provider:
-            raise SystemExit('BLOCKED: --confirm-real-provider is required for billed DeepSeek calls')
         from mea.investigation import deepseek
         secret = deepseek.read_key()
         ledger = provider.Ledger(Path(args.private) / 'ledger.jsonl', int(plan['budget']['ledger_cap_usd'] * NANO))
         if args.arm == 'direct':
-            run_direct(args.private, rows, out, ledger, secret, tags)
+            run_direct(args.private, rows, target, ledger, secret, tags)
         else:
-            run_agent(args.private, rows, out, ledger, secret, tags, plan['arms']['agent'])
-    if not only:
+            run_agent(args.private, rows, target, ledger, secret, tags, plan['arms']['agent'])
+    if rerun:
+        moved, promoted = promote(out, target, rerun)
+        with (out / 'reruns.jsonl').open('a') as f:
+            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason, rerun=rerun, superseded=moved,
+                                    promoted=promoted)) + '\n')
+    elif not only:
         write(out / 'manifest.json', dict(plan_sha256=plan_sha, code_sha=head, dirty=dirty, set=args.set, arm=args.arm, rep=args.rep,
-                                         round=args.round, workers=workers, started_at=started, finished_at=time.time(),
+                                         round=args.round, workers=tags['workers'], started_at=started, finished_at=time.time(),
                                          samples=[s['slug'] for s in rows]))
+
+
+def promote(out, stage, rerun):
+    """Archive each replaced result under superseded/<rerun>/, then move its staged replacement in.
+
+    Only slugs with a staged result are replaced; a slug whose rerun wrote nothing keeps its active result."""
+    moved, promoted = [], []
+    for staged in sorted(stage.glob('*.json')):
+        slug = staged.stem
+        moved += supersede(out, {slug}, rerun)
+        for src in [staged, *sorted((stage / 'raw').glob(f'{slug}.*'))]:
+            dest = out / src.relative_to(stage)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dest)
+            promoted.append(str(dest.relative_to(out)))
+    for src in sorted((stage / 'scopes').glob('*.json')):
+        dest = out / 'scopes' / src.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dest)
+    return moved, promoted
 
 
 # ---- judge ----------------------------------------------------------------------------------
@@ -392,15 +449,20 @@ def cmd_judge(args):
             return pr, None, 'JUDGE_FAILED:' + str(exc), receipt
 
     from concurrent.futures import ThreadPoolExecutor
+    blocked = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         # Decisions are written by this thread only, after each judgement returns.
         for pr, parsed, status, receipt in pool.map(judge_one, todo):
             if parsed is not None:
                 doc['decisions'][pr['slug']] = parsed
+            if status.startswith('JUDGE_BLOCKED'):
+                blocked.append(pr['slug'])
             write(decisions_path, doc)
             print(json.dumps(dict(slug=pr['slug'], candidates=len(pr['candidates']), status=status,
                                   seconds=receipt.get('elapsed_seconds'))), flush=True)
     write(decisions_path, doc)
+    if blocked:
+        raise SystemExit('BLOCKED: judge admission refused (decisions saved) for: ' + ','.join(blocked))
 
 
 # ---- score ----------------------------------------------------------------------------------
@@ -408,6 +470,10 @@ def cmd_judge(args):
 def tables(plan, set_name, base, private):
     jdir = base / 'judge'
     packet, mapping, decisions = (read(jdir / n) for n in ('packet.json', 'judge-only-mapping.json', 'decisions.json'))
+    # The judged packet must be the one the current outputs produce; a replaced output is judged first.
+    rebuilt, _ = judging.build_packet(outputs_for(plan, set_name, base.parent.parent, base.name, private), plan['judge']['packet_seed'])
+    if rebuilt != packet:
+        raise SystemExit('BLOCKED: run outputs changed after judging; judge them before scoring')
     labels = judging.reveal(packet, mapping, decisions)
     out = {}
     for arm in arms.ARMS:
@@ -505,8 +571,7 @@ def cmd_agreement(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--private', type=Path, default=PRIVATE, required=PRIVATE is None,
-                        help='private M3 directory (default: $MEA_M3_PRIVATE)')
+    parser.add_argument('--private', type=Path, default=PRIVATE, help='private M3 directory (default: $MEA_M3_PRIVATE)')
     sub = parser.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('capture')
     c.add_argument('--refs', required=True)
@@ -531,6 +596,9 @@ def main(argv=None):
         if name == 'agreement':
             p.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)
+    # Only `agreement` with an explicit --runs works without the private directory.
+    if args.private is None and not (args.cmd == 'agreement' and args.runs is not None):
+        parser.error('--private (or MEA_M3_PRIVATE) is required for this command')
     if getattr(args, 'runs', 0) is None:
         args.runs = args.private / 'runs'
     return dict(capture=cmd_capture, run=cmd_run, judge=cmd_judge, score=cmd_score,

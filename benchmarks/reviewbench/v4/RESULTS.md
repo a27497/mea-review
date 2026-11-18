@@ -79,7 +79,7 @@ CI and the stop decision. Sensitivity analyses (a) and (b) and the
 per-defect found counts behind the attribution also equal the frozen values.
 
 The same recomputation at the frozen code `31f6ebd` gives identical files.
-Closeout changes to `score.py` add a 1e-9 tolerance to the inclusive
+Closeout changes to `score.py` add a 1e-12 rounding tolerance to the inclusive
 ten-point rule. They change no frozen value.
 
 ### Mechanical attribution of the 33 defects neither arm found
@@ -116,16 +116,19 @@ The rules are deterministic, and no model was used.
   the Agent's initial diff in each of the three repetitions.
 - In some repetition, Agent tools read the gold file for 32 defects and
   returned a gold line itself for 30.
-- The 99 Agent tasks on these PRs ended as follows:
+- The 33 defects come from 27 PRs, so 81 Agent tasks (27 PRs × 3
+  repetitions) are behind them. These are a subset of the 105 tasks in the
+  operations table and use the same unit:
 
   | Outcome | Tasks |
   | --- | --- |
-  | Insufficient evidence | 41 |
+  | Insufficient evidence | 31 |
   | Zero candidates | 35 |
-  | Candidates, none matching these defects | 6 |
-  | Candidates partly rejected by validation | 4 |
-  | Stopped (7 INVALID_MODEL_DECISION, 4 OUTPUT_BUDGET, 2 TOOL_NOT_ALLOWED) | 13 |
+  | Candidates, none matching these defects | 3 |
+  | Candidates partly rejected by validation | 2 |
+  | Stopped (5 INVALID_MODEL_DECISION, 3 OUTPUT_BUDGET, 2 TOOL_NOT_ALLOWED) | 10 |
 
+  6 of these tasks had another file's diff omitted from the first request.
 - The misses are therefore not retrieval failures of the commented line.
   This rule cannot show whether the other context needed to recognise a
   defect was seen. That context could be a callee in an unchanged file. A

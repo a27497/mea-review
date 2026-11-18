@@ -87,6 +87,7 @@ class ScoringTests(unittest.TestCase):
         self.assertLess(0.3 - 0.2, score.THRESHOLD)
         self.assertEqual(score.stop_decision(0.3, 0.2)['outcome'], 'THRESHOLD_MET')
         self.assertEqual(score.stop_decision(0.3, 0.2000001)['outcome'], 'NEGATIVE_RESULT_STOP')
+        self.assertEqual(score.stop_decision(0.3, 0.2000000005)['outcome'], 'NEGATIVE_RESULT_STOP')
         self.assertEqual(score.stop_decision(0.20, 0.35)['outcome'], 'NEGATIVE_RESULT_STOP')
 
 
@@ -604,6 +605,74 @@ class OperatorFlowTests(unittest.TestCase):
                 self.cli('run', *common, '--approval', str(approval))
         self.assertFalse((self.runs / 'holdout').exists())
 
+    def test_rerun_guards_stage_lock_and_judged_rounds(self):
+        common = ['--plan', str(self.plan_path), '--set', 'dev', '--round', 'g', '--runs', str(self.runs), '--arm', 'static', '--rep', '1']
+        out = self.runs / 'dev' / 'g' / 'static' / 'rep1'
+        with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)):
+            # --only is checked on a first run too.
+            with self.assertRaisesRegex(SystemExit, 'outside the set'):
+                self.cli('run', *common, '--only', 'owned--fixture--9')
+            # A recorded attempt without results still makes the next run a rerun.
+            with patch.object(self.m3, 'run_static', lambda *a: (_ for _ in ()).throw(RuntimeError('killed'))):
+                with self.assertRaisesRegex(RuntimeError, 'killed'):
+                    self.cli('run', *common)
+            self.assertEqual(list(out.glob('*.json')), [])
+            with self.assertRaisesRegex(SystemExit, 'already ran'):
+                self.cli('run', *common)
+            self.cli('run', *common, '--only', 'owned--fixture--1', '--reason', 'first attempt killed')
+            first = json.loads((out / 'owned--fixture--1.json').read_text())
+            # A failing rerun leaves the active result in place.
+            (out / 'owned--fixture--1.json').write_bytes(canonical(dict(first, status='STOPPED', reason='HTTP_ERROR')))
+            with patch.object(self.m3, 'load_eval', lambda *a: (_ for _ in ()).throw(ValueError('INPUT_SHA256_MISMATCH:x'))):
+                with self.assertRaisesRegex(ValueError, 'INPUT_SHA256_MISMATCH'):
+                    self.cli('run', *common, '--only', 'owned--fixture--1', '--reason', 'bad snapshot')
+            self.assertEqual(json.loads((out / 'owned--fixture--1.json').read_text())['reason'], 'HTTP_ERROR')
+            self.assertFalse((out / 'superseded').exists())
+            # A second invocation on the same arm and repetition is refused while one holds the lock.
+            with self.m3.arm_lock(out), self.assertRaisesRegex(SystemExit, 'another run holds'):
+                self.cli('run', *common, '--only', 'owned--fixture--1', '--reason', 'parallel')
+            # Once the round is judged, reruns go to a new round.
+            (out.parent.parent / 'judge').mkdir(parents=True)
+            (out.parent.parent / 'judge' / 'packet.json').write_bytes(b'{}')
+            with self.assertRaisesRegex(SystemExit, 'already judged'):
+                self.cli('run', *common, '--only', 'owned--fixture--1', '--reason', 'after judging')
+
+    def test_score_refuses_outputs_changed_after_judging(self):
+        common = ['--plan', str(self.plan_path), '--set', 'dev', '--round', 'sj', '--runs', str(self.runs)]
+        calls = []
+        def judge_call(body, secret, connect=None):
+            calls.append(1)
+            user = json.loads(body['messages'][1]['content'])
+            decisions = [dict(candidate_id=c['candidate_id'], verdict='FALSE_POSITIVE', gold_id=None, novel_valid=None, reason='r')
+                         for c in user['candidates']]
+            return dict(http_status=200, finish_reason='stop', content=json.dumps(dict(decisions=decisions)), usage=dict(prompt_tokens=1, completion_tokens=1))
+        static = self.runs / 'dev' / 'sj' / 'static' / 'rep1'
+        with patch.object(self.m3, 'git_state', lambda: ('f' * 40, False)), patch.object(self.m3.provider, 'judge_call', judge_call), \
+                patch('mea.investigation.deepseek.read_key', lambda *a: 'sk-' + 'a' * 32):
+            self.cli('run', *common, '--arm', 'static', '--rep', '1')
+            result = json.loads((static / 'owned--fixture--1.json').read_text())
+            fake = dict(path='shop/pricing.py', side='head', line=2, title='t', trigger='g', impact='i', citations=[], candidate_id='x')
+            (static / 'owned--fixture--1.json').write_bytes(canonical(dict(result, candidates=[fake])))
+            self.cli('judge', *common, '--confirm-real-provider')
+            self.cli('score', *common)
+            (static / 'owned--fixture--1.json').write_bytes(canonical(dict(result, candidates=[dict(fake, title='changed')])))
+            with self.assertRaisesRegex(SystemExit, 'changed after judging'):
+                self.cli('score', *common)
+        self.assertEqual(calls, [1])
+
+    def test_agreement_with_explicit_runs_needs_no_private_directory(self):
+        with patch.object(self.m3, 'PRIVATE', None), self.assertRaises(SystemExit):
+            with patch('sys.stderr', io.StringIO()):
+                self.m3.main(['score', '--plan', str(self.plan_path), '--set', 'dev', '--round', 'r1'])
+        jdir = self.runs / 'dev' / 'a' / 'judge' / 'agreement'
+        jdir.mkdir(parents=True)
+        (jdir / 'judge-only-key.json').write_bytes(canonical(dict(items={})))
+        reviewer = Path(self.temp.name) / 'reviewer.json'
+        reviewer.write_bytes(canonical({}))
+        with patch.object(self.m3, 'PRIVATE', None), patch.object(self.m3.judging, 'agreement', lambda key, rev: dict(n=0)), patch('sys.stdout', io.StringIO()):
+            self.m3.main(['agreement', '--set', 'dev', '--round', 'a', '--runs', str(self.runs), '--reviewer', str(reviewer)])
+        self.assertEqual(json.loads((jdir / 'agreement.json').read_text()), dict(n=0))
+
     def test_agent_rerun_gets_its_own_scope_and_store(self):
         import multiprocessing
         from concurrent.futures import ProcessPoolExecutor
@@ -637,8 +706,10 @@ class OperatorFlowTests(unittest.TestCase):
             self.cli('run', *common, '--arm', 'direct', '--rep', '1', '--confirm-real-provider')
             self.plan['budget']['ledger_cap_usd'] = 0  # Every judge admission is refused by the ledger cap.
             self.plan_path.write_bytes(canonical(self.plan))
-            printed = self.cli('judge', *common, '--confirm-real-provider')
-        self.assertIn('JUDGE_BLOCKED', printed)
+            out = io.StringIO()
+            with patch('sys.stdout', out), self.assertRaisesRegex(SystemExit, 'judge admission refused .* for: owned--fixture--1'):
+                self.m3.main(['--private', str(self.private), 'judge', *common, '--confirm-real-provider'])
+        self.assertIn('JUDGE_BLOCKED', out.getvalue())
         self.assertEqual(calls, [])
         decisions = json.loads((self.runs / 'dev' / 'rj' / 'judge' / 'decisions.json').read_text())
         self.assertEqual(decisions['decisions'], {})

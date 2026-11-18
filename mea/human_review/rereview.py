@@ -125,10 +125,19 @@ def check(old, new, sends, observed=None, prior=()):
             row.update(status=before['status'], reason='Carried from the earlier re-review of ' + before['old']['commit_id'][:12] + '.')
             if before['status'] == 'OUTDATED':
                 # Keep protecting the lines that replaced the outdated comment, in this increment's coordinates.
-                region, unresolved = carry_region(before.get('replaced_head_lines'), before_head, relation, old_head, nv, complete)
-                row['replaced_head_lines'] = region
-                if unresolved:
-                    row['replaced_region_unresolved'] = dict(path=before['replaced_head_lines']['path'], reason=unresolved)
+                earlier = before.get('replaced_region_unresolved')
+                if earlier:
+                    # Once unresolved, the file stays unresolved; a rename in this increment moves the marker.
+                    f = changed_file(nv, earlier['path']) if relation == 'INCREMENTAL_LINEAR' else None
+                    if not (f and f['status'] == 'removed'):
+                        row['replaced_region_unresolved'] = dict(path=f['path'] if f else earlier['path'], reason=earlier['reason'])
+                else:
+                    region, unresolved = carry_region(before.get('replaced_head_lines'), before_head, relation, old_head, nv, complete)
+                    row['replaced_head_lines'] = region
+                    if unresolved:
+                        path = before['replaced_head_lines']['path']
+                        f = changed_file(nv, path) if relation == 'INCREMENTAL_LINEAR' else None
+                        row['replaced_region_unresolved'] = dict(path=f['path'] if f and f['status'] != 'removed' else path, reason=unresolved)
         elif relation != 'INCREMENTAL_LINEAR' or p['commit_id'] != old_head:
             row['reason'] = 'Comment commit is not the base of a linear increment; manual recheck.'
         elif p['side'] == 'LEFT':

@@ -79,8 +79,12 @@ approval naming its SHA-256, the frozen code SHA and a clean `mea/` and
 (`plan.check_samples`) are applied to PLAN.json with the exclusion list whose
 SHA-256 PLAN.json records. A completed arm and repetition cannot run again. An
 infrastructure rerun names `--only SLUGS` and `--reason`, which is logged. It
-only replaces a missing output or a transport or provider stop; the earlier
-output and receipt move to `superseded/<rerun>/`. An Agent rerun gets its own
-scope id and store.
+only replaces a missing output or a transport or provider stop, and only before
+the round is judged. It writes to `staging/<rerun>/`; when it finishes, each
+replaced output and receipt moves to `superseded/<rerun>/` and the new one takes
+its place. An Agent rerun gets its own scope id and store. A run that recorded
+an attempt but wrote no output also counts as run. One invocation per arm and
+repetition holds a lock. `score` refuses outputs that differ from the judged
+packet, and `judge` exits non-zero when the ledger refused a judge request.
 The cost ledger prices reported usage at the official list price, keeps a
 peak-rate bound and refuses a request above USD 10 or above the PLAN cap.

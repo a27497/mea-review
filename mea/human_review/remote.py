@@ -36,8 +36,9 @@ def anchor_others(payload, remote):
     for c in remote['comments']:
         if c.get('user', {}).get('login') != remote['principal'] and all(c.get(k) == payload[k] for k in ['commit_id', 'path', 'line', 'side']):
             plain = ' '.join(re.sub(r'<!--.*?-->|<[^>]+>', '', c.get('body') or '', flags=re.S).split())
+            # The excerpt is for display; the digest of the complete body detects any edit.
             rows.append(dict(id=c['id'], login=c['user']['login'], html_url=c.get('html_url'), excerpt=plain[:300],
-                             label='Already raised by ' + c['user']['login']))
+                             body_sha256=digest(c.get('body') or ''), label='Already raised by ' + c['user']['login']))
     return rows
 
 

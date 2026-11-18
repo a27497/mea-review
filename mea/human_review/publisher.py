@@ -97,9 +97,7 @@ class Publisher:
             if intent['status']!='NOT_SENT':raise ValueError('ONLY_PROVABLY_NOT_SENT_MAY_RELEASE')
             intent['status']='ABANDONED_NEVER_SENT';event(intent,'abandoned','User discarded a provably unsent intent. Uncertain attempts can never use this path.');put(db,intent)
             db.execute('delete from human_send_slots where intent_id=?',(identifier,))
-            d=get(db,intent['draft_id'],'draft')
-            if len(d['history'])>=16:raise ValueError('DRAFT_REVISION_BOUND')
-            d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
+            d=get(db,intent['draft_id'],'draft');self.keep_history(d)
             d.setdefault('abandoned_intents',[]).append(identifier);d.pop('intent_id',None)
             d.update(status='DRAFT',confirmation=None,approval=None,revision=d['revision']+1);event(d,'confirmation_required','No resend occurred. A new exact user confirmation is required.');put(db,d)
         return d
@@ -115,12 +113,17 @@ class Publisher:
             if intent['status']!='UNCERTAIN' or intent.get('last_reconcile')!='ABSENT':raise ValueError('RECONCILED_ABSENCE_REQUIRED')
             intent['status']='RELEASED_AFTER_RECONCILE';event(intent,'released','User released the slot after a complete listing showed no matching comment. Absence is evidence, not proof.');put(db,intent)
             db.execute('delete from human_send_slots where intent_id=?',(identifier,))
-            d=get(db,intent['draft_id'],'draft')
-            if len(d['history'])>=16:raise ValueError('DRAFT_REVISION_BOUND')
-            d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
+            d=get(db,intent['draft_id'],'draft');self.keep_history(d)
             d.setdefault('abandoned_intents',[]).append(identifier);d.pop('intent_id',None)
             d.update(status='DRAFT',confirmation=None,approval=None,revision=d['revision']+1);event(d,'confirmation_required','Released after reconciliation. A new exact human confirmation is required before any send.');put(db,d)
         return d
+
+    @staticmethod
+    def keep_history(d):
+        # A release must always be possible. At the history bound the oldest entry is dropped;
+        # the released intent itself keeps its full record and events.
+        if len(d['history'])>=16:d['history']=d['history'][-15:]
+        d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
 
     def validate_comment(self,comment,intent):
         if (not isinstance(comment,dict) or type(comment.get('id')) is not int or comment['id']<1 or

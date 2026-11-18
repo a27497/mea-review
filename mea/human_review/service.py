@@ -120,13 +120,13 @@ class Service:
 
     @staticmethod
     def incremental(review,task_id):
-        """Local evidence that a version's base side is an earlier head, not the PR merge base.
+        """Local evidence that a version's base side is its predecessor's head, not the PR merge base.
 
         History cannot prove the opposite: a --since snapshot opened as the first version has no
         linked predecessor. The live lane therefore admits a LEFT anchor only when GitHub's merge
         base, read in the same admission, equals the frozen base revision (admit_remote)."""
-        versions=review['versions'];base=next(v for v in versions if v['task_id']==task_id)['revisions']['base']
-        return any(v['task_id']!=task_id and v['revisions']['head']==base for v in versions)
+        versions=review['versions'];index=next(i for i,v in enumerate(versions) if v['task_id']==task_id)
+        return index>0 and versions[index]['revisions']['base']==versions[index-1]['revisions']['head']
 
     def remote_identity(self,remote):
         return copy.deepcopy(self.remote.identity_of(remote))
@@ -244,6 +244,9 @@ class Service:
             else:
                 ids=[v['task_id'] for v in r['versions']];index=ids.index(new_task_id)
                 if index==0:raise ValueError('REREVIEW_PREDECESSOR_REQUIRED')
+                # Re-reviews run in version order: a later mapping is never computed without its
+                # predecessor's result, so no stored result has to be recomputed afterwards.
+                if index>1 and not any(x['new_task_id']==ids[index-1] for x in r.get('rereviews',[])):raise ValueError('REREVIEW_PREDECESSOR_RESULT_REQUIRED')
                 old_id=ids[index-1];old,_=task_checked(self.store,old_id);new,_=task_checked(self.store,new_task_id)
                 sends=rows(db,'send',review_id)
                 prior=[x for x in r.get('rereviews',[]) if x['new_task_id'] in ids[:index]]

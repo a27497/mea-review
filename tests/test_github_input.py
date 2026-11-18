@@ -419,6 +419,14 @@ class GithubInputTests(unittest.TestCase):
         # Tree unavailable: the contents are still checked against their own Git blob (C1 behavior).
         report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: Response(404, b'{}')}), now=0)
         self.assertEqual(snapshot['files'][0]['sides']['head']['text'], fx.HEAD_FILES['shop/pricing.py'])
+        # A tree read that failed during the null-sha check is still reported by context selection, once.
+        fetcher = fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: Response(503, b'{}')})
+        report, snapshot = capture(REF, fetcher, now=0)
+        selection = report['context_selection']
+        self.assertEqual(selection['status'], 'FAILED')
+        self.assertEqual([(g['kind'], g['code']) for g in selection['gaps']], [(TRANSPORT, 'HTTP_503')])
+        self.assertEqual(sum(1 for g in report['gaps'] if g['code'] == 'HTTP_503'), 1)
+        self.assertEqual(sum(1 for path, _ in fetcher.calls if path == tree), 1)
 
     def test_c2_tree_blob_size_invalid_absent_and_present(self):
         tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'

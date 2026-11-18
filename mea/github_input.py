@@ -489,6 +489,17 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     files = []
     null_sha = []
     used = 0
+    trees = []
+
+    def head_tree():
+        # One recursive tree read per capture, shared by null-SHA identity checks and context selection.
+        # The gaps of that read are kept with it, so context selection reports them wherever it ran.
+        if not trees:
+            before = len(c.gaps)
+            response, tree = c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree')
+            trees.append((response, tree, c.gaps[before:]))
+        return trees[0][:2]
+
     for entry in listed:
         # previous_filename exists only for renames and copies (shape-checked for those).
         name, before = entry['filename'], entry.get('previous_filename') or entry['filename']
@@ -503,9 +514,14 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
         status = entry['status'] if entry['status'] in {'modified', 'added', 'removed', 'renamed', 'copied', 'changed'} else 'changed'
         sides = {}
         if status != 'removed':
-            if entry['sha'] is None:
-                null_sha.append(name)  # Read at the pinned head; checked against its own Git blob.
-            source = fetch_source(c, name, head, 'head', entry['sha'])
+            expected = entry['sha']
+            if expected is None:
+                # Read at the pinned head. Its identity comes from the pinned tree entry when the tree lists the
+                # path: a symlink's contents response carries its target's blob, which the self-check accepts.
+                null_sha.append(name)
+                _, tree = head_tree()
+                expected = next((e['sha'] for e in (tree or {}).get('tree', []) if e['path'] == name and e['type'] == 'blob'), None)
+            source = fetch_source(c, name, head, 'head', expected)
             if source:
                 sides['head'] = source
         if status != 'added':
@@ -541,8 +557,10 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
     elif context_limit <= 0 or len(files) >= MAX_FILES:
         report['context_selection'] = dict(status='NOT_REQUESTED', files=[])
     else:
+        early = bool(trees)
         before_context = len(c.gaps)
-        response, tree = c.json(f'{c.base}/git/trees/{head}?recursive=1', what='tree')
+        response, tree = head_tree()
+        tree_gaps = [dict(g) for g in trees[0][2]] if early else []  # Recorded before before_context.
         if tree is None:
             if response is not None:  # A definitive 404/422: the pinned tree is not available.
                 c.gap(MISSING, f'TREE_HTTP_{response.status}', None, 'head', request='tree')
@@ -569,11 +587,11 @@ def _capture(c, reference, owner, repo, number, pin, context_limit, now, search_
                                  sides=dict(base=dict(source), head=dict(source))), reason))
         # FAILED: no tree, so no context could be selected. PARTIAL: tree, search or a
         # context read had a gap. COLLECTED: every context request answered.
-        status = 'FAILED' if entries is None else 'PARTIAL' if len(c.gaps) > before_context else 'COLLECTED'
+        status = 'FAILED' if entries is None else 'PARTIAL' if len(c.gaps) > before_context or tree_gaps else 'COLLECTED'
         report['context_selection'] = dict(status=status, method=selection_method,
                                            files=[dict(path=f['path'], reason=r, tree_size=sizes.get(f['path'])) for f, r in context],
                                            candidates_considered=len(picks),
-                                           gaps=[dict(g) for g in c.gaps[before_context:]])
+                                           gaps=tree_gaps + [dict(g) for g in c.gaps[before_context:]])
     files.extend(f for f, _ in context)
     body = pr['body'] or ''  # GitHub returns null for an empty description.
     if '\0' in body:

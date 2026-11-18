@@ -398,6 +398,36 @@ class GithubInputTests(unittest.TestCase):
         report, snapshot = capture(REF, fx.Fetcher(), now=0)
         self.assertEqual((report['status'], report['compare_sha_null']), ('COMPLETE', []))
 
+    def test_null_compare_sha_is_checked_against_the_pinned_tree_blob(self):
+        # A symlink to a regular file: contents returns the target's text with the target's own blob sha,
+        # so the self-check passes. The pinned tree lists the link's blob, which does not match.
+        row = fx.Fetcher().files()[0]
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        entries = fx.Fetcher().routes()[tree]['tree']
+        link = fx.git_blob_sha(b'shop/target.py')
+        linked = [dict(e, sha=link) if e['path'] == 'shop/pricing.py' else e for e in entries]
+        target = fx.contents('def total(items):\n    return 0\n')
+        fetcher = fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={
+            tree: dict(tree=linked, truncated=False), f'{BASE}/contents/shop/pricing.py?ref={fx.HEAD}': target})
+        report, snapshot = capture(REF, fetcher, now=0)
+        self.assertIn((MISSING, 'BLOB_SHA_MISMATCH', 'shop/pricing.py'), kinds(report))
+        self.assertNotIn('head', next(f for f in snapshot['files'] if f['path'] == 'shop/pricing.py')['sides'])
+        self.assertEqual(sum(1 for path, _ in fetcher.calls if path == tree), 1)  # One tree read, shared with context selection.
+        # Boundary: the tree lists the real blob, so the null-sha read is accepted.
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)]), now=0)
+        self.assertEqual(report['status'], 'COMPLETE')
+        # Tree unavailable: the contents are still checked against their own Git blob (C1 behavior).
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: Response(404, b'{}')}), now=0)
+        self.assertEqual(snapshot['files'][0]['sides']['head']['text'], fx.HEAD_FILES['shop/pricing.py'])
+        # A tree read that failed during the null-sha check is still reported by context selection, once.
+        fetcher = fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: Response(503, b'{}')})
+        report, snapshot = capture(REF, fetcher, now=0)
+        selection = report['context_selection']
+        self.assertEqual(selection['status'], 'FAILED')
+        self.assertEqual([(g['kind'], g['code']) for g in selection['gaps']], [(TRANSPORT, 'HTTP_503')])
+        self.assertEqual(sum(1 for g in report['gaps'] if g['code'] == 'HTTP_503'), 1)
+        self.assertEqual(sum(1 for path, _ in fetcher.calls if path == tree), 1)
+
     def test_c2_tree_blob_size_invalid_absent_and_present(self):
         tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
         entries = fx.Fetcher().routes()[tree]['tree']
@@ -484,7 +514,9 @@ class GithubInputTests(unittest.TestCase):
             self.assertEqual(self.run_cli(out, fx.Fetcher()), 0)
             first = snap.read_bytes()
             self.assertEqual(self.run_cli(out, fx.Fetcher()), 0)  # Normal: a recapture rewrites it.
-            self.assertEqual(snap.read_bytes(), first)
+            # The capture clock is the wall clock (now=None), so compare without captured_at.
+            undated = lambda raw: {**json.loads(raw), 'provenance': {k: v for k, v in json.loads(raw)['provenance'].items() if k != 'captured_at'}}
+            self.assertEqual(undated(snap.read_bytes()), undated(first))
             self.assertEqual(self.run_cli(out, failing()), 3)     # Violation: the earlier snapshot is gone.
             self.assertFalse(snap.exists())
             self.assertEqual(json.loads((Path(out) / 'capture.json').read_text())['status'], 'FAILED')

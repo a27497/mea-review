@@ -2,3 +2,6 @@
 /node_modules/
 __pycache__/
 *.py[cod]
+# Generated run outputs (m3.py --runs); real and synthetic run data stay outside Git.
+/r2/
+/runs/

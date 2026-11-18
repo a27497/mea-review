@@ -161,12 +161,23 @@ by ACCOUNT". The confirmer must acknowledge each one by id with
 
 `send` re-reads the remote state and makes one POST with no retry. A draft has
 at most one send intent, and an anchor already commented on by the same login
-is refused. The result is PUBLISHED; NOT_SENT when no POST was issued or GitHub
+is refused. The last read before the POST lists the other accounts' comments
+on the anchor again; when that listing shows one added, removed or edited since
+confirmation, the result is NOT_SENT. A change made after that read is not seen. The result is PUBLISHED; NOT_SENT when no POST was issued or GitHub
 answered 400/401/403/404/422; or UNCERTAIN after a timeout, connection error,
-5xx, 429 or an unusable 201 receipt. `reconcile --intent ID` looks for exactly
-one matching comment in a complete listing and makes no POST. Only after a
+5xx, 429 or an unusable 201 receipt. A NOT_SENT intent keeps its slot until
+`abandon-not-sent --intent ID --human-approved` releases it; that command
+refuses every other state. Release works at the draft's 16-entry history bound
+by dropping the oldest history entry. `reconcile --intent ID` looks for exactly one
+matching comment in a complete listing and makes no POST. Only after a
 complete listing shows no match can `release-after-reconcile --human-approved`
-free the slot, and the draft then needs a new preview and confirmation.
+free an UNCERTAIN slot. After either release the draft needs a new preview and
+confirmation.
+
+A base-side (LEFT) anchor is admitted only when GitHub's merge base, read in
+the same admission, equals the frozen base revision. The base side of a
+`--since` snapshot whose base is an earlier head therefore cannot be commented
+on, even when the snapshot is opened as the first review version.
 
 After a new commit, capture the increment with `--since`, run the investigation
 on it, import the task and run `rereview --review REVIEW --task-id NEW_TASK`.
@@ -175,7 +186,24 @@ deleted anchor line is OUTDATED, and an unchanged one is CURRENT at its mapped
 line. GitHub's own `line` for the comment is recorded next to it. Outdated
 comments stay on their original commit and are not re-posted. A new candidate
 inside the lines that replaced an outdated comment, or on a sent comment's
-mapped line, cannot be drafted.
+mapped line, cannot be drafted. Those replacement lines are mapped through each
+later increment; when they cannot be mapped (incomplete listing, missing patch
+or head source), candidates in that file cannot be drafted in that or any later
+increment. If an incomplete listing does not name that file, a rename may have
+been omitted. The marker then keeps the last known path with lineage UNKNOWN,
+and no head-side candidate can be drafted or previewed. Re-reviews run in
+version order: a version's re-review needs its predecessor's re-review first,
+and a refused re-review links nothing and leaves confirmations in place.
+
+Known limitations of the UNKNOWN lineage:
+
+- UNKNOWN is cleared as soon as a later listing contains the last known path,
+  even when that entry is an unrelated file that reuses the name. Protection
+  then narrows to that path, and a candidate in the renamed file can be
+  drafted.
+- A re-review record written before this rule has no lineage field and is read
+  as KNOWN. A stored result for a version is not recomputed by a repeated
+  `rereview`, so candidates that an older version marked NEW stay draftable.
 
 The workbench shows confirmation, writeback and re-review state for these
 reviews. It has no live remote and cannot confirm or send a live draft.

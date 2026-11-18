@@ -10,10 +10,13 @@ per request, no retries. Private inputs and outputs live under --private (never 
   agreement-packet / agreement               Codex consistency sample (holdout)
 """
 import argparse
+import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -29,7 +32,8 @@ import plan as planning  # noqa: E402
 import provider  # noqa: E402
 import score as scoring  # noqa: E402
 
-PRIVATE = Path('/home/ubuntu/projects/mea-private-restored-20261117/m3')
+# Private M3 directory (samples, runs, ledger). Never inside the repository; set --private or MEA_M3_PRIVATE.
+PRIVATE = Path(os.environ['MEA_M3_PRIVATE']) if os.environ.get('MEA_M3_PRIVATE') else None
 NANO = 1_000_000_000
 
 
@@ -162,7 +166,10 @@ def agent_batch(private, b, batch, out, ledger_path, ledger_cap, tags, config):
     ledger = provider.Ledger(ledger_path, ledger_cap)
     lines = []
     snaps = {s['slug']: load_eval(private, s) for s in batch}
-    scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}", inputs=[digest(v) for v in snaps.values()],
+    # An infrastructure rerun gets its own scope id, so its own store: it never reopens batch b1 of the
+    # original run (stored task, PHASE3_TASK_CAP) or overwrites that batch's scope file.
+    suffix = f"-x{tags['rerun']}" if tags.get('rerun') else ''
+    scope = dict(id=f"mea-live-m3-{tags['set']}-{tags['round']}-r{tags['rep']}-b{b}{suffix}", inputs=[digest(v) for v in snaps.values()],
                  max_tasks=len(batch), max_requests=6 * len(batch), tool_profile=config['tool_profile'],
                  first_turn=config['first_turn'], approval=config['approval'], budget_usd=config['scope_budget_usd'],
                  task_budget=config['task_budget'])
@@ -223,6 +230,47 @@ def run_agent(private, rows, out, ledger, secret, tags, config):
                 print(json.dumps(line), flush=True)
 
 
+# Stops caused by transport or provider infrastructure, not by the model's answer. Only these (or a
+# missing output, e.g. a killed process) may be rerun; any other first result is the sample.
+INFRASTRUCTURE_STOPS = {'NO_RECEIPT', 'HTTP_ERROR', 'RESPONSE_BYTE_BOUND', 'CONNECTION_OR_RESPONSE_UNCERTAIN',
+                        'PROVIDER_HTTP_ERROR', 'PROVIDER_WORKER_NOT_READY', 'RECOVERY_UNCERTAIN', 'TRANSPORT', 'UNCERTAIN'}
+
+
+def infrastructure_stop(out, slug):
+    path = Path(out) / f'{slug}.json'
+    if not path.exists():
+        return True
+    result = read(path)
+    return result.get('status') != 'COMPLETED' and result.get('reason') in INFRASTRUCTURE_STOPS
+
+
+def supersede(out, slugs, rerun):
+    """Move earlier outputs of rerun slugs to superseded/<rerun>/ so billed first attempts stay on disk."""
+    out, moved = Path(out), []
+    target = out / 'superseded' / rerun
+    for slug in sorted(slugs):
+        for path in [out / f'{slug}.json', *sorted((out / 'raw').glob(f'{slug}.*'))]:
+            if path.exists():
+                dest = target / path.relative_to(out)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                path.rename(dest)
+                moved.append(str(dest.relative_to(out)))
+    return moved
+
+
+def check_preregistration(plan, exclusions_path):
+    """Apply the pre-registered sample rules (exclusions, duplicates, cross-set repositories, bounds) before a holdout run."""
+    exclusions_path = Path(exclusions_path)
+    raw = exclusions_path.read_bytes() if exclusions_path.exists() else None
+    # The same bytes are hashed and decoded, so the checked rules are the approved ones.
+    if raw is None or hashlib.sha256(raw).hexdigest() != plan['exclusions']['sha256']:
+        raise SystemExit('BLOCKED: the exclusion list must match the SHA-256 recorded in PLAN.json')
+    try:
+        planning.check_samples(plan['samples'], decode(raw, limit=50_000_000))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise SystemExit('BLOCKED: pre-registration check failed: ' + str(exc)) from None
+
+
 def cmd_run(args):
     plan, plan_sha = planning.load_plan(args.plan, args.plan_sha256)
     head, dirty = git_state()
@@ -234,33 +282,98 @@ def cmd_run(args):
     out = Path(args.runs) / args.set / args.round / args.arm / f'rep{args.rep}'
     if args.set == 'holdout':
         planning.holdout_admission(plan, plan_sha, read(args.approval) if args.approval else None)
+        check_preregistration(plan, args.exclusions or Path(args.private) / 'selection' / 'exclusions.json')
         if head != plan['frozen']['code_sha'] or dirty:
             raise SystemExit('BLOCKED: holdout runs need the frozen code SHA and a clean mea/benchmarks tree')
+    if args.arm != 'static' and not args.confirm_real_provider:
+        raise SystemExit('BLOCKED: --confirm-real-provider is required for billed DeepSeek calls')
     only = set(args.only.split(',')) if args.only else None
-    if out.exists() and any(out.glob('*.json')):
+    if only:
+        unknown = sorted(only - {s['slug'] for s in plan['samples'][args.set]})
+        if unknown:
+            raise SystemExit('BLOCKED: --only names slugs outside the set: ' + ','.join(unknown))
+    with arm_lock(out):
+        run_locked(args, plan, plan_sha, head, dirty, tags, out, only)
+
+
+@contextmanager
+def arm_lock(out):
+    """One invocation per arm and repetition at a time; held until the results are in place."""
+    import fcntl
+    path = out.parent / f'.{out.name}.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SystemExit('BLOCKED: another run holds this arm and repetition') from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def run_locked(args, plan, plan_sha, head, dirty, tags, out, only):
+    # A directory with results or a recorded attempt has been dispatched before; even a first attempt
+    # that wrote nothing may have created a store, so any further run is a rerun with its own scope.
+    attempted = out.exists() and (any(out.glob('*.json')) or (out / 'attempts.jsonl').exists())
+    target, rerun = out, None
+    if attempted:
         if not (only and args.reason):
             raise SystemExit('BLOCKED: this arm/rep already ran; an infrastructure rerun needs --only SLUGS and --reason')
-        with (out / 'reruns.jsonl').open('a') as f:
-            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason)) + '\n')
+        if (out.parent.parent / 'judge' / 'packet.json').exists():
+            raise SystemExit('BLOCKED: this round is already judged; rerun in a new round directory')
+        kept = sorted(slug for slug in only if not infrastructure_stop(out, slug))
+        if kept:
+            raise SystemExit('BLOCKED: a rerun only replaces a missing output or an infrastructure stop; kept: ' + ','.join(kept))
+        rerun = digest(dict(at=time.time(), only=sorted(only), reason=args.reason))[:8]
+        tags['rerun'] = rerun
+        target = out / 'staging' / rerun  # The active results stay in place until the replacement is complete.
     out.mkdir(parents=True, exist_ok=True)
+    with (out / 'attempts.jsonl').open('a') as f:
+        f.write(json.dumps(dict(at=time.time(), only=sorted(only) if only else None, reason=args.reason, rerun=rerun,
+                                code_sha=head)) + '\n')
     rows = samples(plan, args.set, only)
     started = time.time()
     if args.arm == 'static':
-        run_static(args.private, rows, out)
+        run_static(args.private, rows, target)
     else:
-        if not args.confirm_real_provider:
-            raise SystemExit('BLOCKED: --confirm-real-provider is required for billed DeepSeek calls')
         from mea.investigation import deepseek
         secret = deepseek.read_key()
         ledger = provider.Ledger(Path(args.private) / 'ledger.jsonl', int(plan['budget']['ledger_cap_usd'] * NANO))
         if args.arm == 'direct':
-            run_direct(args.private, rows, out, ledger, secret, tags)
+            run_direct(args.private, rows, target, ledger, secret, tags)
         else:
-            run_agent(args.private, rows, out, ledger, secret, tags, plan['arms']['agent'])
-    if not only:
+            run_agent(args.private, rows, target, ledger, secret, tags, plan['arms']['agent'])
+    if rerun:
+        moved, promoted = promote(out, target, rerun)
+        with (out / 'reruns.jsonl').open('a') as f:
+            f.write(json.dumps(dict(at=time.time(), only=sorted(only), reason=args.reason, rerun=rerun, superseded=moved,
+                                    promoted=promoted)) + '\n')
+    elif not only:
         write(out / 'manifest.json', dict(plan_sha256=plan_sha, code_sha=head, dirty=dirty, set=args.set, arm=args.arm, rep=args.rep,
-                                         round=args.round, workers=workers, started_at=started, finished_at=time.time(),
+                                         round=args.round, workers=tags['workers'], started_at=started, finished_at=time.time(),
                                          samples=[s['slug'] for s in rows]))
+
+
+def promote(out, stage, rerun):
+    """Archive each replaced result under superseded/<rerun>/, then move its staged replacement in.
+
+    Only slugs with a staged result are replaced; a slug whose rerun wrote nothing keeps its active result."""
+    moved, promoted = [], []
+    for staged in sorted(stage.glob('*.json')):
+        slug = staged.stem
+        moved += supersede(out, {slug}, rerun)
+        for src in [staged, *sorted((stage / 'raw').glob(f'{slug}.*'))]:
+            dest = out / src.relative_to(stage)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dest)
+            promoted.append(str(dest.relative_to(out)))
+    for src in sorted((stage / 'scopes').glob('*.json')):
+        dest = out / 'scopes' / src.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dest)
+    return moved, promoted
 
 
 # ---- judge ----------------------------------------------------------------------------------
@@ -316,7 +429,11 @@ def cmd_judge(args):
     def judge_one(pr):
         body = judging.judge_request(pr)
         reserved = provider.reservation(judging.JUDGE_MODEL, len(canonical(body)), judging.JUDGE_MAX_TOKENS)
-        entry = ledger.admit(reserved, arm='judge', slug=pr['slug'], set=args.set, round=args.round)
+        try:
+            entry = ledger.admit(reserved, arm='judge', slug=pr['slug'], set=args.set, round=args.round)
+        except ValueError as exc:
+            # Request or ledger cap reached: nothing was sent. The loop keeps writing finished decisions.
+            return pr, None, 'JUDGE_BLOCKED:' + str(exc), {}
         receipt = provider.judge_call(body, secret)
         price = provider.cost(judging.JUDGE_MODEL, receipt.get('usage'))
         ledger.record(entry, at=time.time(), arm='judge', slug=pr['slug'], model=judging.JUDGE_MODEL, usage=receipt.get('usage'),
@@ -332,15 +449,20 @@ def cmd_judge(args):
             return pr, None, 'JUDGE_FAILED:' + str(exc), receipt
 
     from concurrent.futures import ThreadPoolExecutor
+    blocked = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         # Decisions are written by this thread only, after each judgement returns.
         for pr, parsed, status, receipt in pool.map(judge_one, todo):
             if parsed is not None:
                 doc['decisions'][pr['slug']] = parsed
+            if status.startswith('JUDGE_BLOCKED'):
+                blocked.append(pr['slug'])
             write(decisions_path, doc)
             print(json.dumps(dict(slug=pr['slug'], candidates=len(pr['candidates']), status=status,
                                   seconds=receipt.get('elapsed_seconds'))), flush=True)
     write(decisions_path, doc)
+    if blocked:
+        raise SystemExit('BLOCKED: judge admission refused (decisions saved) for: ' + ','.join(blocked))
 
 
 # ---- score ----------------------------------------------------------------------------------
@@ -348,6 +470,10 @@ def cmd_judge(args):
 def tables(plan, set_name, base, private):
     jdir = base / 'judge'
     packet, mapping, decisions = (read(jdir / n) for n in ('packet.json', 'judge-only-mapping.json', 'decisions.json'))
+    # The judged packet must be the one the current outputs produce; a replaced output is judged first.
+    rebuilt, _ = judging.build_packet(outputs_for(plan, set_name, base.parent.parent, base.name, private), plan['judge']['packet_seed'])
+    if rebuilt != packet:
+        raise SystemExit('BLOCKED: run outputs changed after judging; judge them before scoring')
     labels = judging.reveal(packet, mapping, decisions)
     out = {}
     for arm in arms.ARMS:
@@ -445,7 +571,7 @@ def cmd_agreement(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--private', type=Path, default=PRIVATE)
+    parser.add_argument('--private', type=Path, default=PRIVATE, help='private M3 directory (default: $MEA_M3_PRIVATE)')
     sub = parser.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('capture')
     c.add_argument('--refs', required=True)
@@ -456,7 +582,7 @@ def main(argv=None):
         p.add_argument('--plan-sha256')
         p.add_argument('--set', choices=planning.SETS, required=True)
         p.add_argument('--round', required=True)
-        p.add_argument('--runs', type=Path, default=PRIVATE / 'runs')
+        p.add_argument('--runs', type=Path, help='run directory (default: PRIVATE/runs)')
         if name in ('run', 'judge'):
             p.add_argument('--confirm-real-provider', action='store_true')
             p.add_argument('--only')
@@ -466,9 +592,15 @@ def main(argv=None):
             p.add_argument('--rep', type=int, required=True)
             p.add_argument('--approval')
             p.add_argument('--reason')
+            p.add_argument('--exclusions', type=Path, help='exclusion list bound by PLAN.json (default PRIVATE/selection/exclusions.json)')
         if name == 'agreement':
             p.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)
+    # Only `agreement` with an explicit --runs works without the private directory.
+    if args.private is None and not (args.cmd == 'agreement' and args.runs is not None):
+        parser.error('--private (or MEA_M3_PRIVATE) is required for this command')
+    if getattr(args, 'runs', 0) is None:
+        args.runs = args.private / 'runs'
     return dict(capture=cmd_capture, run=cmd_run, judge=cmd_judge, score=cmd_score,
                 **{'agreement-packet': cmd_agreement_packet, 'agreement': cmd_agreement})[args.cmd](args)
 

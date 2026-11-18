@@ -294,8 +294,6 @@ class ReaderSourceTests(unittest.TestCase):
             self.assertIn(f'value="{value}"', html)
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 import holdout_reveal as reveal  # noqa: E402
@@ -410,3 +408,7 @@ class RevealTests(unittest.TestCase):
                                 '--mapping', str(self.mapping), '--manifest', str(self.manifest), '--out', str(self.root / 'out')],
                                capture_output=True, timeout=60)
         self.assertEqual(again.returncode, 2)
+
+
+if __name__ == '__main__':
+    unittest.main()

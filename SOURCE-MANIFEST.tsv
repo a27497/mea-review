@@ -49,14 +49,17 @@ mea/__main__.py	mea/__main__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Offline
 mea/contract.py	mea/contract.py	344acf0c8bd59157e81d03aa771547e2b330986e	UTF-8 import and shared Git blob digest
 mea/export.py	mea/export.py	344acf0c8bd59157e81d03aa771547e2b330986e	Static report export
 mea/github_input.py	New	M2	Read-only GitHub PR capture into mea-snapshot-v1 with MISSING, TRUNCATED and TRANSPORT gaps
+mea/github_writeback.py	New	M4	Attended live GitHub line-comment remote and CLI for an explicit repository allowlist
 mea/human_review/__init__.py	mea/human_review/__init__.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact Mock module
 mea/human_review/api.py	mea/human_review/api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Mock review API with bounded local requests
 mea/human_review/compare.py	mea/human_review/compare.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Conservative comparison on batch 1 frozen-read protocol
 mea/human_review/demo.py	mea/human_review/demo.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run self-owned frozen examples with batch 1 tools
 mea/human_review/github_contract.py	mea/human_review/github_contract.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact pure Mock wire shape
 mea/human_review/mock_github.py	mea/human_review/mock_github.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact local Mock transport
-mea/human_review/publisher.py	mea/human_review/publisher.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact confirmation, dispatch and reconciliation
-mea/human_review/service.py	mea/human_review/service.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact review workspace and version history
+mea/human_review/publisher.py	mea/human_review/publisher.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Adapted confirmation, dispatch and reconciliation; M4 live lane and M3 closeout review fixes
+mea/human_review/remote.py	New	M4	Shared remote outcome types, approval binding and anchor comments of other accounts
+mea/human_review/rereview.py	New	M4	Incremental re-review anchor mapping through the increment patch
+mea/human_review/service.py	mea/human_review/service.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Adapted review workspace and version history; M4 live lane and M3 closeout review fixes
 mea/human_review/store.py	mea/human_review/store.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Byte-exact SQLite review records
 mea/investigation/__init__.py	mea/investigation/__init__.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/investigation/authorization.py	mea/investigation/authorization.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Replace historical authorization with simulation-only scoped admission
@@ -85,12 +88,14 @@ package-lock.json	package-lock.json	344acf0c8bd59157e81d03aa771547e2b330986e	Pin
 package.json	New	Batch 1	Expose separate Review v3 browser verification
 scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
+tests/fake_github.py	New	M4	Loopback fake of the GitHub REST endpoints used by the writeback lane; synthetic data
 tests/github_fixtures.py	New	M2	Self-owned in-memory GitHub REST fixture
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
 tests/test_controlled_investigation.py	tests/test_real_investigation.py	New	Existing simulation tests plus request-profile regressions
 tests/test_cross_file_tools.py	New	M2	Cross-file tool, paging and citation validation regressions
 tests/test_deepseek_transport.py	New	M2	Live lane, transport and credential tests with a fake HTTPS connection
 tests/test_github_input.py	New	M2	GitHub capture tests over the offline fixture
+tests/test_github_writeback.py	New	M4	Live writeback lane, re-review and increment capture tests against the loopback fake
 tests/test_holdout_adjudication.py	tests/test_holdout_adjudication.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Synthetic adjudication, freeze and reveal test adapted to the private packet boundary
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler

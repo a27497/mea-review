@@ -18,6 +18,10 @@ import scoring  # noqa: E402
 
 VERDICTS = ('MATCH', 'FALSE_POSITIVE', 'UNDETERMINED')
 THRESHOLD = 0.10
+# The ten-point rule is inclusive. F1 differences are float subtractions (0.3 - 0.2 is
+# 0.09999999999999998, an error near 1e-17), so a gap within this rounding tolerance of the
+# threshold meets it. Gaps from F1 values on these sample sizes differ from 0.10 by far more.
+TOLERANCE = 1e-12
 
 
 def dedupe_gold(slug, comments):
@@ -144,11 +148,11 @@ def bootstrap_difference(agent_runs, direct_runs, prs, *, resamples=10000, seed=
     hi = diffs[min(resamples - 1, int((1 - alpha / 2) * resamples))]
     point = mean_f1(agent_runs, prs) - mean_f1(direct_runs, prs)
     return dict(point=point, low=lo, high=hi, resamples=resamples, seed=seed, alpha=alpha,
-                share_at_or_above_threshold=sum(d >= THRESHOLD for d in diffs) / resamples)
+                share_at_or_above_threshold=sum(d >= THRESHOLD - TOLERANCE for d in diffs) / resamples)
 
 
 def stop_decision(agent_mean_f1, direct_mean_f1, threshold=THRESHOLD):
     """M3 stop rule (ROADMAP section 7): Agent must beat Direct by >= 10 F1 points."""
     gap = agent_mean_f1 - direct_mean_f1
     return dict(gap=gap, threshold=threshold,
-                outcome='NEGATIVE_RESULT_STOP' if gap < threshold else 'THRESHOLD_MET')
+                outcome='NEGATIVE_RESULT_STOP' if gap < threshold - TOLERANCE else 'THRESHOLD_MET')

@@ -14,10 +14,12 @@ from mea.contract import digest, git_blob_sha
 from mea.github_writeback import LiveGitHub, Transport, commentable_lines, import_task, main as cli
 from mea.human_review import demo, rereview
 from mea.human_review.publisher import Publisher
-from mea.human_review.remote import binding
+from mea.human_review.remote import NotSent, binding
 from mea.human_review.service import Service
 from mea.human_review.store import get
 from mea.investigation.tasks import Store
+from mea.investigation.tools import View
+from mea.investigation.validation import validate_candidates
 from fake_github import FakeGitHub, TOKEN
 
 REPO, NUMBER = 'mea-owned/m4-sandbox', 3
@@ -29,6 +31,8 @@ V1 = 'def quota():\n    return None\n'
 V2_REPLACE = 'def quota():\n    if True:\n        return None\n'
 # Increment that only inserts above the commented line.
 V2_SHIFT = '# quota helpers\ndef quota():\n    return None\n'
+# A later increment that replaces line 3 of V2_REPLACE, itself one of the lines that replaced line 2.
+V3_REPLACE_AGAIN = 'def quota():\n    if True:\n      return None\n'
 
 
 def diff(before, after):
@@ -240,7 +244,8 @@ class WritebackTests(unittest.TestCase):
                    path='quota.py', side='RIGHT', commit_id=H1, original_commit_id=H1, line=2, original_line=2, position=1, in_reply_to_id=None)
         self.fake.comments.append(bot)
         p = self.s.preview(self.d['id'])
-        self.assertEqual(p['other_comments_at_anchor'], [dict(id=77, login='review-bot[bot]', html_url=bot['html_url'], excerpt='bot', label='Already raised by review-bot[bot]')])
+        self.assertEqual(p['other_comments_at_anchor'], [dict(id=77, login='review-bot[bot]', html_url=bot['html_url'], excerpt='bot',
+                                                              body_sha256=digest('bot'), label='Already raised by review-bot[bot]')])
         with self.assertRaisesRegex(ValueError, 'OTHER_COMMENTS_AT_ANCHOR_NOT_ACKNOWLEDGED'):
             self.s.confirm(self.d['id'], p, True, dict(reference='msg', binding_sha256=binding(p), acknowledged_other_comment_ids=[]))
         p = self.approve()
@@ -476,6 +481,305 @@ class WritebackTests(unittest.TestCase):
             self.assertEqual(get(db, self.d['id'])['status'], 'DRAFT')
         self.assertEqual(self.posts(), 0)
 
+    # ---- M3 closeout: CodeRabbit PR #8 threads left open on c85b1e8 ----------------------------
+
+    def run_cli(self, *argv, out=None):
+        base = ['--store', str(self.root / 'review'), '--allow-repository', REPO] + (['--out', str(out)] if out else [])
+        printed = io.StringIO()
+        with patch('mea.github_writeback.token', return_value=TOKEN), \
+                patch('mea.github_writeback.Transport', lambda secret: Transport(secret, connect=self.fake.connect())), redirect_stdout(printed):
+            code = cli(base + list(argv))
+        return code, printed.getvalue()
+
+    def cli_confirm_and_send(self, draft_id):
+        preview = self.root / 'preview.json'
+        self.assertEqual(self.run_cli('preview', '--draft', draft_id, out=preview)[0], 0)
+        saved = json.loads(preview.read_bytes())['result']
+        self.assertEqual(self.run_cli('confirm', '--draft', draft_id, '--preview', str(preview), '--approval-ref', 'msg re-approved',
+                                      '--binding', saved['binding_sha256'], '--human-approved')[0], 0)
+        sent = self.root / 'send.json'
+        self.assertEqual(self.run_cli('send', '--draft', draft_id, '--confirm-live-write', out=sent)[0], 0)
+        return json.loads(sent.read_bytes())['result']
+
+    def test_cli_abandons_a_422_rejected_intent_and_requires_a_new_confirmation(self):
+        p = self.approve()
+        self.fake.fault = 'HTTP_422'
+        sent = self.root / 'send.json'
+        self.assertEqual(self.run_cli('send', '--draft', self.d['id'], '--confirm-live-write', out=sent)[0], 0)
+        rejected = json.loads(sent.read_bytes())['result']
+        self.assertEqual((rejected['status'], rejected['receipts'][-1]['http_status'], self.posts()), ('NOT_SENT', 422, 1))
+        # The retained intent holds the slot: send returns it without a POST, reconcile leaves it,
+        # and release-after-reconcile (for UNCERTAIN only) refuses it.
+        self.assertEqual(self.run_cli('send', '--draft', self.d['id'], '--confirm-live-write', out=sent)[0], 0)
+        self.assertEqual(json.loads(sent.read_bytes())['result']['intent_id'], rejected['intent_id'])
+        self.assertEqual(self.run_cli('reconcile', '--intent', rejected['intent_id'])[0], 0)
+        code, printed = self.run_cli('release-after-reconcile', '--intent', rejected['intent_id'], '--human-approved')
+        self.assertEqual((code, 'RECONCILED_ABSENCE_REQUIRED' in printed), (2, True))
+        self.assertEqual(self.posts(), 1)
+        # Abandon needs the recorded human decision, then a new preview and confirmation.
+        self.assertEqual(self.run_cli('abandon-not-sent', '--intent', rejected['intent_id'])[0], 2)
+        out = self.root / 'abandon.json'
+        self.assertEqual(self.run_cli('abandon-not-sent', '--intent', rejected['intent_id'], '--human-approved', out=out)[0], 0)
+        released = json.loads(out.read_bytes())
+        self.assertEqual((released['status'], released['abandoned_intents']), ('DRAFT', [rejected['intent_id']]))
+        with self.store.connection() as db:
+            self.assertEqual(get(db, rejected['intent_id'], 'send')['status'], 'ABANDONED_NEVER_SENT')
+            self.assertIsNone(get(db, self.d['id'])['confirmation'])
+        code, printed = self.run_cli('send', '--draft', self.d['id'], '--confirm-live-write')
+        self.assertEqual((code, 'HUMAN_CONFIRMATION_REQUIRED' in printed, self.posts()), (2, True, 1))
+        # An UNCERTAIN send can never take this path.
+        p = self.approve()
+        self.fake.fault = 'HTTP_500_NO_EFFECT'
+        uncertain = Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(uncertain['status'], 'UNCERTAIN')
+        code, printed = self.run_cli('abandon-not-sent', '--intent', uncertain['id'], '--human-approved')
+        self.assertEqual((code, 'ONLY_PROVABLY_NOT_SENT_MAY_RELEASE' in printed), (2, True))
+        self.assertEqual(self.run_cli('reconcile', '--intent', uncertain['id'])[0], 0)
+        self.assertEqual(self.run_cli('release-after-reconcile', '--intent', uncertain['id'], '--human-approved')[0], 0)
+        published = self.cli_confirm_and_send(self.d['id'])
+        self.assertEqual((published['status'], self.posts(), len(self.fake.comments)), ('PUBLISHED', 3, 1))
+
+    def test_acknowledged_anchor_comment_edited_or_removed_before_post_is_not_sent(self):
+        self.fake.comments.append(self.bot(77))
+        pub_for = lambda change: Publisher(self.s, fault=lambda stage, _: change() if stage == 'after_sending' else None)
+        def edit():
+            self.fake.comments[0]['body'] = 'bot, edited after the human acknowledged it'
+        def remove():
+            self.fake.comments.clear()
+        for change in (edit, remove):
+            with self.subTest(change=change.__name__):
+                p = self.approve()
+                self.assertEqual([c['id'] for c in p['other_comments_at_anchor']], [77])
+                r = pub_for(change).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+                self.assertEqual(r['status'], 'NOT_SENT')
+                self.assertIn('OTHER_COMMENTS_AT_ANCHOR_CHANGED', r['events'][-1]['summary'])
+                self.assertEqual(self.posts(), 0)
+                Publisher(self.s).abandon_not_sent(r['id'], True)
+                if change is edit:
+                    self.fake.comments[0]['body'] = 'bot'
+        # The final admission never proceeds without the approved snapshot.
+        p = self.approve()
+        self.assertEqual(p['other_comments_at_anchor'], [])
+        with self.assertRaisesRegex(NotSent, 'OTHER_COMMENTS_AT_ANCHOR_CHANGED'):
+            self.s.remote.post(p['target'], p['payload'], p['remote_identity']['generation'], others=None)
+        self.assertEqual(Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')['status'], 'PUBLISHED')
+        self.assertEqual(self.posts(), 1)
+
+    def test_edit_beyond_the_displayed_excerpt_is_detected(self):
+        long_body = 'x' * 400
+        self.fake.comments.append(dict(self.bot(77), body=long_body))
+        p = self.approve()
+        self.assertEqual(p['other_comments_at_anchor'][0]['excerpt'], 'x' * 300)
+        def edit_tail(stage, _):
+            if stage == 'after_sending':
+                self.fake.comments[0]['body'] = long_body + ' edited after the first 300 characters'
+        r = Publisher(self.s, fault=edit_tail).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(r['status'], 'NOT_SENT')
+        self.assertIn('OTHER_COMMENTS_AT_ANCHOR_CHANGED', r['events'][-1]['summary'])
+        self.assertEqual(self.posts(), 0)
+
+    def test_abandon_works_at_the_draft_history_bound(self):
+        for i in range(16):
+            self.s.edit(self.d['id'], f'Revision {i}', self.d['anchor'])
+        with self.store.connection() as db:
+            self.assertEqual(len(get(db, self.d['id'])['history']), 16)
+        p = self.approve()
+        self.fake.fault = 'HTTP_422'
+        r = Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual(r['status'], 'NOT_SENT')
+        d = Publisher(self.s).abandon_not_sent(r['id'], True)
+        self.assertEqual((d['status'], len(d['history']), d['history'][-1]['body']), ('DRAFT', 16, 'Revision 15'))
+        with self.store.connection() as db:
+            self.assertEqual(get(db, r['id'], 'send')['status'], 'ABANDONED_NEVER_SENT')
+        p = self.approve()
+        self.assertEqual(Publisher(self.s).send(self.d['id'], p['confirmation_digest'], 'LIVE')['status'], 'PUBLISHED')
+
+    def test_rereviews_run_in_version_order(self):
+        first = self.sent()
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-order-2'))
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-order-3'))
+        self.s.increment(self.r['id'], t2['id'])
+        self.s.increment(self.r['id'], t3['id'])
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_PREDECESSOR_RESULT_REQUIRED'):
+            self.s.rereview(self.r['id'], t3['id'])
+        self.assertEqual(self.s.rereview(self.r['id'], t2['id'])['rereviews'][-1]['comments'][0]['status'], 'OUTDATED')
+        row = self.s.rereview(self.r['id'], t3['id'])['rereviews'][-1]['comments'][0]
+        self.assertEqual((row['status'], row['replaced_head_lines']), ('OUTDATED', dict(path='quota.py', start=2, end=3)))
+        self.assertEqual(first['payload']['commit_id'], H1)
+
+    def base_side_task(self, value):
+        # A Mock task whose candidate cites the frozen base side of quota.py:2.
+        t = offline_task(self.store, value)
+        v = View(t['view'])
+        result = v.execute('read_diff', dict(path='quota.py', revision=v.value['revisions']['base']))
+        e = next(e for e in result['evidence'] if e['line'] == 2 and e['side'] == 'base')
+        c = dict(title='Base-side contract', trigger='A caller relies on the removed line', impact='Conditional impact unverified',
+                 change={k: e[k] for k in ['path', 'side', 'line', 'revision']}, evidence_ids=[e['id']])
+        t['results'].append(result)
+        t['candidates'], bad = validate_candidates(v, [c], t['results'])
+        self.assertFalse(bad)
+        t['goal'] = 'Base-side review ' + value['id']
+        t['identity']['goal'] = t['goal']
+        t['id'] = 'task-' + digest(t['identity'])
+        with self.store.transaction() as db:
+            db.execute('insert into tasks values (?,?,?)', (t['id'], digest(t['identity']), json.dumps(t)))
+        return t
+
+    def test_left_anchor_of_a_first_version_since_snapshot_is_refused(self):
+        # GitHub: merge base B, head H2. The frozen snapshot is only the increment H1..H2 (--since H1),
+        # opened as the first review version, so no review history shows that its base is H1.
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)})
+        t = self.base_side_task(snapshot(H1, H2, V1, V2_REPLACE, 'm4-since-first'))
+        r = self.s.create(t['id'])
+        self.assertEqual(len(r['versions']), 1)
+        self.assertFalse(Service.incremental(r, t['id']))
+        d = self.s.draft(r['id'], t['id'], t['candidates'][0]['id'])
+        with self.assertRaisesRegex(ValueError, 'LEFT_SIDE_BASE_MISMATCH'):
+            self.s.preview(d['id'])
+        # A live read without a merge base is refused, not skipped.
+        real_read = LiveGitHub.read
+        def no_merge_base(inner, target):
+            return {k: v for k, v in real_read(inner, target).items() if k != 'merge_base'}
+        with patch.object(LiveGitHub, 'read', no_merge_base), self.assertRaisesRegex(ValueError, 'LEFT_SIDE_BASE_MISMATCH'):
+            self.s.preview(d['id'])
+        self.assertEqual(self.posts(), 0)
+        # Boundary: the same base-side candidate on a full PR snapshot (frozen base = merge base) is admitted.
+        self.fake.push(H1, {'quota.py': diff(BASE, V1)})
+        full = self.base_side_task(snapshot(B, H1, BASE, V1, 'm4-full-left'))
+        r0 = self.s.create(full['id'])
+        p = self.s.preview(self.s.draft(r0['id'], full['id'], full['candidates'][0]['id'])['id'])
+        self.assertEqual((p['payload']['side'], p['payload']['line'], p['base_revision']), ('LEFT', 2, B))
+        with patch.object(LiveGitHub, 'read', no_merge_base), self.assertRaisesRegex(ValueError, 'LEFT_SIDE_BASE_MISMATCH'):
+            self.s.preview(self.s.draft(r0['id'], full['id'], full['candidates'][0]['id'])['id'])
+        # The local history check only names a predecessor-head base an increment. A full snapshot whose
+        # merge base is an older linked head (c) is left to GitHub's merge base in the live admission.
+        review = dict(versions=[dict(task_id='a', revisions=dict(base=B, head=H1)), dict(task_id='b', revisions=dict(base=H1, head=H2)),
+                                dict(task_id='c', revisions=dict(base=H1, head=H3))])
+        self.assertEqual([Service.incremental(review, x) for x in 'abc'], [False, True, False])
+
+    def test_comment_sent_on_a_later_version_is_mapped_after_an_earlier_recheck(self):
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-late-2'))
+        self.s.increment(self.r['id'], t2['id'])
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)})
+        d2 = self.s.draft(self.r['id'], t2['id'], t2['candidates'][0]['id'])
+        p = self.approve(draft=d2)
+        sent = Publisher(self.s).send(d2['id'], p['confirmation_digest'], 'LIVE')
+        self.assertEqual((sent['status'], sent['payload']['commit_id'], sent['payload']['line']), ('PUBLISHED', H2, 3))
+        # The H1 -> H2 re-review cannot map a comment written on H2 itself.
+        self.assertEqual(self.s.rereview(self.r['id'], t2['id'])['rereviews'][-1]['comments'][0]['status'], 'NEEDS_RECHECK')
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-late-3'))
+        self.fake.push(H3, {'quota.py': diff(BASE, V3_REPLACE_AGAIN)}, outdated_ids={sent['remote_comment']['id']})
+        check = self.s.rereview(self.r['id'], t3['id'])['rereviews'][-1]
+        row = check['comments'][0]
+        self.assertEqual((row['status'], row['old']['commit_id'], row['replaced_head_lines']), ('OUTDATED', H2, dict(path='quota.py', start=3, end=3)))
+        self.assertEqual([c['status'] for c in check['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+            self.s.draft(self.r['id'], t3['id'], t3['candidates'][0]['id'])
+        self.assertEqual(self.posts(), 1)
+
+    def test_replacement_lines_stay_protected_through_a_later_increment(self):
+        first = self.sent()
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-region-2'))
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        row = self.s.rereview(self.r['id'], t2['id'])['rereviews'][-1]['comments'][0]
+        self.assertEqual((row['status'], row['replaced_head_lines']), ('OUTDATED', dict(path='quota.py', start=2, end=3)))
+        # H2 -> H3 replaces line 3, one of the lines that replaced the outdated comment.
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-region-3'))
+        self.assertEqual([c['change']['line'] for c in t3['candidates']], [3])
+        self.fake.push(H3, {'quota.py': diff(BASE, V3_REPLACE_AGAIN)})
+        check = self.s.rereview(self.r['id'], t3['id'])['rereviews'][-1]
+        row = check['comments'][0]
+        self.assertEqual((row['status'], row['replaced_head_lines']), ('OUTDATED', dict(path='quota.py', start=2, end=3)))
+        self.assertEqual([c['status'] for c in check['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+            self.s.draft(self.r['id'], t3['id'], t3['candidates'][0]['id'])
+        self.assertEqual(self.posts(), 1)
+
+    # ---- M3 closeout round 3 -------------------------------------------------------------------
+
+    def records(self):
+        with self.store.connection() as db:
+            return sorted(db.execute('select id, doc from human_records').fetchall())
+
+    def test_refused_rereview_of_an_unlinked_version_changes_nothing(self):
+        first = self.sent()
+        rid = self.r['id']
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-refused-2'))
+        t3 = offline_task(self.store, snapshot(H2, H3, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-refused-3'))
+        # v2 is linked without a re-review result, and a v2 draft holds a live confirmation.
+        self.s.increment(rid, t2['id'])
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        d2 = self.s.draft(rid, t2['id'], t2['candidates'][0]['id'])
+        self.approve(draft=d2)
+        self.fake.push(H3, {'quota.py': diff(BASE, V3_REPLACE_AGAIN)})
+        before = self.records()
+        # v3 is not linked yet: both the CLI and the service refuse it before linking anything.
+        code, printed = self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])
+        self.assertEqual((code, 'REREVIEW_PREDECESSOR_RESULT_REQUIRED' in printed), (2, True))
+        with self.assertRaisesRegex(ValueError, 'REREVIEW_PREDECESSOR_RESULT_REQUIRED'):
+            self.s.rereview(rid, t3['id'])
+        self.assertEqual(self.records(), before)
+        r = self.s.open(rid)
+        d = next(x for x in r['drafts'] if x['id'] == d2['id'])
+        self.assertEqual(([v['task_id'] for v in r['versions']], len(r['comparisons']), r.get('rereviews', [])),
+                         ([self.t1['id'], t2['id']], 1, []))
+        self.assertEqual(d['status'], self.s.remote.confirmed)
+        self.assertIsNotNone(d['confirmation'])
+        self.assertIsNotNone(d['approval'])
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t3['id'], '--candidate', t3['candidates'][0]['id'])
+        self.assertEqual((code, 'REVIEW_VERSION_NOT_LINKED' in printed), (2, True))
+        # In order, v3 is linked, the old confirmation is cleared and the result is stored together.
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        r = self.s.open(rid)
+        d = next(x for x in r['drafts'] if x['id'] == d2['id'])
+        self.assertEqual(([v['task_id'] for v in r['versions']], len(r['comparisons']), [x['new_task_id'] for x in r['rereviews']]),
+                         ([self.t1['id'], t2['id'], t3['id']], 2, [t2['id'], t3['id']]))
+        self.assertEqual((d['status'], d['confirmation'], d['approval']), ('DRAFT', None, None))
+        self.assertEqual([c['status'] for c in r['rereviews'][-1]['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        self.assertEqual(self.posts(), 1)
+
+    def test_omitted_rename_keeps_the_replacement_region_unknown(self):
+        first = self.sent()
+        rid = self.r['id']
+        h4 = '4' * 40
+        t2 = offline_task(self.store, snapshot(H1, H2, V1, V2_REPLACE, 'm4-omit-2'))
+        self.fake.push(H2, {'quota.py': diff(BASE, V2_REPLACE)}, outdated_ids={first['remote_comment']['id']})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t2['id'])[0], 0)
+        # v3: an incomplete listing that omits the rename quota.py -> renamed_quota.py.
+        partial = snapshot(H2, H3, 'def quota():\n    return 5\n', 'def quota():\n    return 6\n', 'm4-omit-3')
+        partial['files'][0].update(path='independent.py', base_path='independent.py')
+        partial['scope'].update(complete_listing=False, reported_changed_files=3)
+        t3 = offline_task(self.store, partial)
+        self.fake.push(H3, {'renamed_quota.py': diff(BASE, V2_REPLACE)})
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        after_v3 = self.s.open(rid)['rereviews'][-1]['comments'][0]
+        # v4: a complete listing that changes the replacement region under the new name.
+        latest = snapshot(H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-omit-4')
+        latest['files'][0].update(path='renamed_quota.py', base_path='renamed_quota.py')
+        latest['files'][1]['sides'] = {name: side(CALLER.replace('from quota', 'from renamed_quota')) for name in ('head', 'base')}
+        t4 = offline_task(self.store, latest)
+        self.assertEqual((t4['reason'], [c['change']['path'] for c in t4['candidates']]), ('HYPOTHESIS_SUPPORTED', ['renamed_quota.py']))
+        self.fake.push(h4, {'renamed_quota.py': diff(BASE, V3_REPLACE_AGAIN)})
+        # A draft made after linking v4 but before its re-review.
+        self.s.increment(rid, t4['id'])
+        out = self.root / 'draft.json'
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'], out=out)
+        self.assertEqual(code, 0, printed)
+        draft_id = json.loads(out.read_bytes())['draft_id']  # local command: no GitHub request log
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t4['id'])[0], 0)
+        check = self.s.open(rid)['rereviews'][-1]
+        code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'])
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
+        code, printed = self.run_cli('preview', '--draft', draft_id)
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
+        self.assertEqual([c['status'] for c in check['candidates']], ['AT_OUTDATED_COMMENT_LOCATION'])
+        # The marker keeps the last known path and an unknown lineage through v3 and v4.
+        for row in (after_v3, check['comments'][0]):
+            self.assertEqual((row['status'], row['replaced_region_unresolved']), ('OUTDATED', dict(
+                path='quota.py', lineage='UNKNOWN', reason='Increment file listing is incomplete; the earlier replacement lines cannot be mapped.')))
+        self.assertEqual(self.posts(), 1)
+
 
 class AnchorMappingTests(unittest.TestCase):
     def test_line_mapping_through_hunks(self):
@@ -524,6 +828,87 @@ class AnchorMappingTests(unittest.TestCase):
         self.assertEqual(result['comments'][0]['status'], 'OUTDATED')
         self.assertEqual(result['candidates'][0]['status'], 'AT_OUTDATED_COMMENT_LOCATION')
 
+    def carried(self, files, complete=True, region_head=H2, candidates=None):
+        old = dict(view=dict(revisions=dict(head=H2), files=[]), candidates=[])
+        new = dict(view=dict(revisions=dict(base=H2, head=H3), files=files, coverage=dict(complete_listing=complete)),
+                   candidates=candidates or [dict(id='c1', change=dict(path='a.py', line=4, side='head', revision=H3))])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(new_head=region_head, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1),
+                                                           replaced_head_lines=dict(path='a.py', start=2, end=3))])]
+        result = rereview.check(old, new, [send], None, prior)
+        return result['comments'][0], [c['status'] for c in result['candidates']]
+
+    def test_outdated_replacement_region_is_mapped_or_left_unresolved(self):
+        edit = lambda patch_text, status='modified': dict(path='a.py', base_path='a.py', status=status, patch=patch_text, sides=dict(head=dict()))
+        # Insertion above the region shifts it: 2-3 becomes 3-4.
+        row, statuses = self.carried([edit('@@ -0,0 +1 @@\n+# header\n')])
+        self.assertEqual((row['status'], row['replaced_head_lines'], statuses), ('OUTDATED', dict(path='a.py', start=3, end=4), ['AT_OUTDATED_COMMENT_LOCATION']))
+        # File unchanged in a complete listing: the region stays.
+        row, statuses = self.carried([])
+        self.assertEqual((row['replaced_head_lines'], statuses), (dict(path='a.py', start=2, end=3), ['NEW']))
+        # Region lines deleted with nothing in their place, or the file removed: nothing left to protect.
+        row, statuses = self.carried([edit('@@ -1,4 +1,2 @@\n a\n-b\n-c\n d\n')], candidates=[dict(id='c1', change=dict(path='a.py', line=2, side='head', revision=H3))])
+        self.assertEqual((row['replaced_head_lines'], row.get('replaced_region_unresolved'), statuses), (None, None, ['NEW']))
+        row, _ = self.carried([dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))])
+        self.assertEqual((row['status'], row['replaced_head_lines']), ('OUTDATED', None))
+        # Cannot be mapped: incomplete listing, missing patch, or the earlier head is not this base.
+        for kwargs in (dict(files=[], complete=False), dict(files=[edit(None)]), dict(files=[], region_head=H1)):
+            with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+                row, statuses = self.carried(**kwargs)
+                self.assertEqual((row['status'], row['replaced_head_lines'], row['replaced_region_unresolved']['path']), ('OUTDATED', None, 'a.py'))
+                self.assertEqual(statuses, ['AT_OUTDATED_COMMENT_LOCATION'])
+
+    def test_unresolved_region_persists_and_follows_a_rename(self):
+        old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
+                                                  replaced_region_unresolved=dict(path='a.py', reason='earlier'))])]
+        def run(files, candidate_path):
+            new = dict(view=dict(revisions=dict(base=H3, head='4' * 40), files=files, coverage=dict(complete_listing=True)),
+                       candidates=[dict(id='c1', change=dict(path=candidate_path, line=7, side='head', revision='4' * 40))])
+            result = rereview.check(old, new, [send], None, prior)
+            return result['comments'][0], [c['status'] for c in result['candidates']]
+        # A complete listing with the file unchanged does not clear the marker.
+        row, statuses = run([], 'a.py')
+        self.assertEqual((row['replaced_region_unresolved']['path'], statuses), ('a.py', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # A rename moves it to the destination path.
+        renamed = dict(path='b.py', base_path='a.py', status='renamed', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict()))
+        row, statuses = run([renamed], 'b.py')
+        self.assertEqual((row['replaced_region_unresolved']['path'], statuses), ('b.py', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # Removing the file clears it.
+        removed = dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))
+        row, statuses = run([removed], 'a.py')
+        self.assertEqual((row.get('replaced_region_unresolved'), statuses), (None, ['NEW']))
+
+    def test_unknown_lineage_blocks_every_head_file_until_a_listing_names_the_last_path(self):
+        old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])
+        send = dict(id='send-1', status='PUBLISHED', payload=dict(commit_id=H1, path='a.py', line=2, side='RIGHT', body='x'),
+                    remote_comment=dict(id=1, html_url='u'))
+        prior = [dict(new_head=H3, comments=[dict(send_id='send-1', status='OUTDATED', new=None, old=dict(commit_id=H1), replaced_head_lines=None,
+                                                  replaced_region_unresolved=dict(path='a.py', reason='earlier', lineage='UNKNOWN'))])]
+        def run(files, base=H3, complete=True):
+            new = dict(view=dict(revisions=dict(base=base, head='4' * 40), files=files, coverage=dict(complete_listing=complete)),
+                       candidates=[dict(id='c1', change=dict(path='b.py', line=7, side='head', revision='4' * 40))])
+            result = rereview.check(old, new, [send], None, prior)
+            return result['comments'][0].get('replaced_region_unresolved'), [c['status'] for c in result['candidates']]
+        other = dict(path='b.py', base_path='b.py', status='modified', patch='@@ -7 +7 @@\n-x\n+y\n', sides=dict(head=dict()))
+        # A complete listing that does not name a.py: it may be b.py now, so b.py stays blocked.
+        marker, statuses = run([other])
+        self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # A non-linear step keeps the lineage unknown.
+        marker, statuses = run([other], base=H2)
+        self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+        # A listing that names a.py by its last path makes the lineage known again; b.py is then unrelated.
+        named = dict(path='a.py', base_path='a.py', status='modified', patch='@@ -1 +1 @@\n-x\n+y\n', sides=dict(head=dict()))
+        marker, statuses = run([named, other])
+        self.assertEqual((marker['path'], marker['lineage'], statuses), ('a.py', 'KNOWN', ['NEW']))
+        # A known marker turns unknown when a later listing is incomplete and does not name the file.
+        prior[0]['comments'][0]['replaced_region_unresolved'] = dict(path='a.py', reason='earlier')
+        marker, statuses = run([other], complete=False)
+        self.assertEqual((marker['lineage'], statuses), ('UNKNOWN', ['AT_OUTDATED_COMMENT_LOCATION']))
+
     def test_copies_incomplete_listings_and_missing_sources_are_not_guessed(self):
         copy_entry = dict(path='b.py', base_path='a.py', status='copied', patch='@@ -2 +2 @@\n-x\n+y\n', sides=dict(head=dict()))
         self.assertEqual(self.view_check([copy_entry])['status'], 'CURRENT')
@@ -546,9 +931,6 @@ class BoundaryTests(unittest.TestCase):
             names += [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
             self.assertFalse([n for n in names if 'github_writeback' in n], file)
 
-
-if __name__ == '__main__':
-    unittest.main()
 
 
 class IncrementCaptureTests(unittest.TestCase):
@@ -595,3 +977,7 @@ class IncrementCaptureTests(unittest.TestCase):
         self.assertEqual(report['failure']['code'], 'SINCE_NOT_ANCESTOR_OF_HEAD')
         with self.assertRaises(ValueError):
             capture(f'{fx.OWNER}/{fx.REPO}#{fx.NUMBER}', f, since='abc')
+
+
+if __name__ == '__main__':
+    unittest.main()

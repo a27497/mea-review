@@ -62,3 +62,90 @@ The Agent made 448 requests and 662 tool calls: 460 `read_source`,
   evidence) after spending their tool budget on reads.
 - By language: Python (15 PRs) Direct 0.169 and Agent 0.239. JS/TS
   (20 PRs) Direct 0.126 and Agent 0.164.
+
+## M3 closeout (offline, no model calls)
+
+The frozen results above are unchanged. No holdout task was run again.
+
+### Recomputation
+
+`m3.py score` was run on a copy of the saved arm outputs and judge
+decisions, at the closeout code. The new `score.json` and
+`score-per-pr.json` are byte-identical to the frozen files. Their SHA-256
+values are `8a35f0c3449ad321b840226cce0639cdc453acb63f377ff630b47b2af0fae41e`
+and `949586f48a4c35ea4820dafadfdcba8260c5b0a8d6e77545d70dec7c10de316f`.
+The recomputed values cover P, R and F1 for the three arms, the bootstrap
+CI and the stop decision. Sensitivity analyses (a) and (b) and the
+per-defect found counts behind the attribution also equal the frozen values.
+
+The same recomputation at the frozen code `31f6ebd` gives identical files.
+Closeout changes to `score.py` add a 1e-12 rounding tolerance to the inclusive
+ten-point rule. They change no frozen value.
+
+### Mechanical attribution of the 33 defects neither arm found
+
+The rules are deterministic, and no model was used.
+
+- **Gold lines.** These are the lines of every maintainer comment the
+  curator assigned to the defect, at the reviewed commit, on the comment's
+  side. The range is `original_start_line..original_line`. Each range was
+  checked against the last line of the comment's `diff_hunk`.
+- **Agent context in one repetition.** This is the union of two sets. The
+  first holds every row of the first request's `initial_diffs`, context rows
+  included, parsed from the stored request body. The second holds every
+  evidence row returned by a tool result. A line counts as seen when it
+  entered the model context at least once.
+- **Agent classes.** A repetition is FULL when every gold line was seen,
+  PARTIAL when some were, and NONE otherwise. Over the three repetitions, a
+  defect is SEEN_NOT_FLAGGED if any repetition is FULL. It is PARTIAL if the
+  best repetition is PARTIAL, and NEVER_SEEN if all three are NONE. It is
+  UNDETERMINED when the context or a gold line cannot be read.
+- **Direct.** The request body was regenerated from the frozen evaluation
+  snapshot, and its SHA-256 matched every repetition's receipt. Each gold
+  line is classed as in the diff hunks, only in the full-file rows, or
+  absent from the input.
+
+| Class | Agent | Direct |
+| --- | --- | --- |
+| SEEN_NOT_FLAGGED / in diff | 33 | 33 |
+| PARTIAL | 0 | 0 |
+| NEVER_SEEN / not in input | 0 | 0 |
+| UNDETERMINED | 0 | 0 |
+
+- The 33 defects have 68 gold lines: 66 added lines and 2 hunk context
+  lines. Each defect covers at least one changed line. All 68 lines were in
+  the Agent's initial diff in each of the three repetitions.
+- In some repetition, Agent tools read the gold file for 32 defects and
+  returned a gold line itself for 30.
+- The 33 defects come from 27 PRs, so 81 Agent tasks (27 PRs × 3
+  repetitions) are behind them. These are a subset of the 105 tasks in the
+  operations table and use the same unit:
+
+  | Outcome | Tasks |
+  | --- | --- |
+  | Insufficient evidence | 31 |
+  | Zero candidates | 35 |
+  | Candidates, none matching these defects | 3 |
+  | Candidates partly rejected by validation | 2 |
+  | Stopped (5 INVALID_MODEL_DECISION, 3 OUTPUT_BUDGET, 2 TOOL_NOT_ALLOWED) | 10 |
+
+  6 of these tasks had another file's diff omitted from the first request.
+- What this shows is limited to the commented lines: every one was visible
+  in the first turn. The rule cannot show whether the cross-file evidence
+  needed to recognise a defect was available, for example a callee in an
+  unchanged file. A reviewer comment always anchors on a diff line, so a
+  gold line is visible by construction once its diff fits the window. The
+  data does not apportion the misses among missing context, candidate
+  validation, stop budgets and judge matching. The 33 are defects that both
+  groups missed; they say nothing about other defects or about the quality
+  difference between the groups.
+
+Per-defect rows stay in private storage.
+
+### Novel-defect review packet
+
+A blind packet was prepared for an independent review (NOT_RUN). It holds
+the candidates the judge called real defects outside the gold. All 20
+Agent candidates are included, plus 20 of the 72 Direct candidates drawn
+with seed `mea-m3-closeout-novel-review-20261118`. The packet stays private.
+It is an auxiliary metric only and does not change the frozen scores.

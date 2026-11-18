@@ -21,6 +21,8 @@ const sides = {base: 'BASE', head: 'HEAD'};
 const anchors = {base: 'LEFT', head: 'RIGHT'};
 const terminal = new Set(['COMPLETED', 'STOPPED', 'CANCELLED']);
 const owns = review => review?.mode === 'MOCK_OWNED_REVIEW';
+const liveReview = review => review?.mode === 'LIVE_GITHUB_REVIEW';
+const liveSend = send => send?.mode === 'LIVE_GITHUB';
 const humanTask = () => state.human?.tasks.find(t => t.id === current().taskId) || state.human?.tasks[0];
 const activeTask = () => state.mode === 'completed' ? state.task : state.mode === 'human' ? humanTask() : null;
 const candidate = () => humanTask()?.candidates.find(c => c.id === current().candidateId) || humanTask()?.candidates[0];
@@ -532,7 +534,13 @@ function selectHumanVersion(id) {
   resetPreview(); render();
 }
 function readStatus(d) {
-  return d.status === 'CONFIRMED_MOCK_ONLY' ? 'CONFIRMED' : d.status;
+  return d.status === 'CONFIRMED_MOCK_ONLY' ? 'CONFIRMED' : d.status === 'CONFIRMED_LIVE' ? 'CONFIRMED · LIVE' : d.status;
+}
+function candidateStatus(t, c) {
+  const d = state.human?.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
+  const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
+  const blocked = check && check.status !== 'NEW' ? check.status : null;
+  return d ? readStatus(d) : blocked || 'NOT DRAFTED';
 }
 function renderEditor(n,t,c,d) {
   const ctx = current();
@@ -575,6 +583,7 @@ function renderEditor(n,t,c,d) {
       exact.append(el('h3','Exact comment preview'),fields([['Target',repo(p.target)],['Commit',p.payload.commit_id],
         ['Diff anchor',p.payload.path + ':' + p.payload.line + ' ' + p.payload.side],['Mode',p.mode]]),
         el('pre',p.payload.body,'exact-body'));
+      otherComments(exact,p.other_comments_at_anchor);
       if (p.mode === 'MOCK_GITHUB_NOT_LIVE' && p.confirmation_digest !== d.confirmation?.confirmation_digest) {
         const ack = el('input'); ack.type = 'checkbox'; ack.id = 'acknowledge'; ack.checked = state.acknowledged;
         const lab = el('label'); lab.htmlFor = ack.id;
@@ -601,12 +610,30 @@ function renderEditor(n,t,c,d) {
       section.append(detail('Saved confirmation', fields([['Commit',c.commit_id],['Diff anchor',c.path + ':' + c.line + ' ' + c.side]]),el('pre',c.body,'exact-body')),send);
     }
   }
+  if (d.approval && d.confirmation) {
+    const c = d.confirmation.payload;
+    const confirmed = block(n,'Human confirmation');
+    confirmed.id = 'live-confirmation';
+    confirmed.append(fields([['Pull request',repo(d.confirmation.target)],['Head commit',c.commit_id],['Line',c.path + ':' + c.line + ' ' + c.side],
+      ['Approval',d.approval.reference],['Binding',d.approval.binding_sha256]]),el('pre',c.body,'exact-body'),
+      el('p','Confirmed in the attended command-line lane. This workbench cannot send to GitHub.','rail-sub'));
+    otherComments(confirmed,d.confirmation.other_comments_at_anchor,d.approval.acknowledged_other_comment_ids);
+  }
   const sends = state.human.sends.filter(s => s.draft_id === d.id);
   if (sends.length) {
-    const history = block(n,'Mock dispatch');
+    const live = sends.some(liveSend);
+    const history = block(n,live ? 'GitHub writeback' : 'Mock dispatch');
+    if (live) history.id = 'writeback-status';
     for (const send of sends) {
-      history.append(el('p',send.status + ' · MOCK ONLY','mono'));
-      if (['UNCERTAIN','SENDING'].includes(send.status)) {
+      history.append(el('p',send.status + ' · ' + (liveSend(send) ? 'LIVE GITHUB' : 'MOCK ONLY'),'mono'));
+      if (liveSend(send) && send.remote_comment?.html_url?.startsWith('https://github.com/')) {
+        history.append(link('Comment ' + send.remote_comment.id + ' on GitHub',send.remote_comment.html_url,'mono'));
+      }
+      if (liveSend(send) && ['UNCERTAIN','SENDING','NOT_SENT'].includes(send.status)) {
+        const callout = el('div','','callout warn');
+        callout.append(el('h3','Live outcome needs the command-line lane'),el('p','Reconcile read-only with mea.github_writeback before any further send.'));
+        history.append(callout);
+      } else if (['UNCERTAIN','SENDING'].includes(send.status)) {
         const callout = el('div','','callout warn');
         callout.append(el('h3','Mock delivery outcome unknown'),el('p','The local Mock may already have stored the comment. Use read-only reconciliation to check for one exact match.'));
         history.append(callout,action('Reconcile read-only', async () => {
@@ -614,7 +641,7 @@ function renderEditor(n,t,c,d) {
           notify(r.status === 'UNCERTAIN' ? 'No unique complete match. Outcome remains unknown.' : r.status + ' · No resend.');
         },'reconcile-send'));
       }
-      if (send.status === 'NOT_SENT') {
+      if (send.status === 'NOT_SENT' && !liveSend(send)) {
         const ack = el('input'); ack.type = 'checkbox';
         const id = 'unsent-ack'; ack.id = id;
         const lab = el('label'); lab.htmlFor = id; lab.append(ack,'Discard this provably unsent intent.');
@@ -625,7 +652,7 @@ function renderEditor(n,t,c,d) {
         release.disabled = true; ack.addEventListener('change',() => {release.disabled = !ack.checked;});
         history.append(lab,release);
       }
-      history.append(lazy('Dispatch receipt',() => [pre({id:send.id,payload:send.payload,comment:send.remote_comment,events:send.events})]));
+      history.append(lazy('Dispatch receipt',() => [pre({id:send.id,payload:send.payload,comment:send.remote_comment,receipts:send.receipts,events:send.events})]));
     }
   }
   if (d.history.length) section.append(lazy('Prior draft revisions',() => [pre(d.history)]));
@@ -643,7 +670,7 @@ function renderHuman(n,t) {
     const meta = el('p'); meta.append(tag('CONDITIONAL','accent'),'  ' + t.candidates.length + ' candidate' + (t.candidates.length === 1 ? '' : 's')); n.append(meta);
     if (t.candidates.length > 1) {
       const list = block(n,'Candidates');
-      for (const row of t.candidates) list.append(currentAttr(card(row.title,name(row.change.path) + ':' + row.change.line,() => pickCandidate(t,row)), row === c));
+      for (const row of t.candidates) list.append(currentAttr(card(row.title,name(row.change.path) + ':' + row.change.line + ' · ' + candidateStatus(t,row),() => pickCandidate(t,row)), row === c));
     }
     const impact = c.impact.split(/(?<=\.)\s+/)[0];
     n.append(el('h3',c.title,'candidate-title'),el('p','If ' + c.trigger.replace(/^If\s+/,'').replace(/\.$/,'') + ', ' + impact.charAt(0).toLowerCase() + impact.slice(1),'rail-sub'));
@@ -664,7 +691,8 @@ function renderHuman(n,t) {
       renderEditor(n,t,c,d);
     }
   } else n.append(el('p','This frozen version has no accepted candidate. No comment was created.','rail-sub'));
-  const live = block(n,'',el('p','Live GitHub publishing is disabled.','rail-sub'));
+  renderRereview(n,t);
+  const live = block(n,'',el('p',liveReview(state.human) ? 'Live GitHub writes run only in the attended command-line lane for allowlisted repositories.' : 'Live GitHub publishing is disabled.','rail-sub'));
   if (currentDraft()) {
     const disabled = button('Publish to GitHub',() => {}); disabled.disabled = true; live.append(disabled);
   }
@@ -678,6 +706,39 @@ function renderHuman(n,t) {
       }))] : []),
     detail('Review events',pre(state.human.events)),exportsFor(null,state.human)
   ]));
+}
+function otherComments(parent, rows, acknowledged) {
+  if (!rows?.length) return;
+  const box = el('div','','callout warn'); box.id = 'other-comments';
+  box.append(el('h3','Same line already has comments from other accounts'));
+  for (const row of rows) {
+    const p = el('p','','');
+    p.append(tag(row.label,'warn'),'  ' + row.excerpt.slice(0,160) + (row.excerpt.length > 160 ? '…' : ''));
+    box.append(p);
+    if (row.html_url?.startsWith('https://github.com/')) box.append(link('Comment ' + row.id + ' by ' + row.login,row.html_url,'mono'));
+  }
+  box.append(el('p',acknowledged ? 'Seen by the confirmer before sending: ' + acknowledged.join(', ') : 'The confirmer decides whether to send anyway.','rail-sub'));
+  parent.append(box);
+}
+function renderRereview(n,t) {
+  const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id);
+  if (!check) return;
+  const section = block(n,'Incremental re-review');
+  section.id = 'rereview-status';
+  section.append(el('p',check.relation + ' · ' + short(check.old_head) + ' → ' + short(check.new_head),'mono'));
+  for (const row of check.comments) {
+    const where = row.old.path + ':' + row.old.line + ' ' + row.old.side;
+    const now = row.new ? ' → ' + row.new.path + ':' + row.new.line : '';
+    const gh = row.github && typeof row.github === 'object' ? ' · GitHub ' + (row.github.outdated ? 'outdated' : 'line ' + row.github.line) : '';
+    const p = el('p','',''); p.append(tag(row.status,row.status === 'CURRENT' ? 'accent' : 'warn'),'  comment ' + row.comment_id + ' · ' + where + now + gh);
+    section.append(p);
+  }
+  if (!check.comments.length) section.append(el('p','No sent comment to check.','rail-sub'));
+  for (const row of check.candidates) {
+    const p = el('p','',''); p.append(tag(row.status,row.status === 'NEW' ? 'accent' : 'warn'),'  ' + name(row.change.path) + ':' + row.change.line);
+    section.append(p);
+  }
+  section.append(el('p','Outdated comments stay on their original commit and are never re-posted at a new location.','rail-sub'));
 }
 function renderRail(preserve = false) {
   const n = ui.review, previous = n.scrollTop;

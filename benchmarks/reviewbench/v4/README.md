@@ -53,6 +53,9 @@ candidates for an independent reviewer, without arm or judge verdict.
 
 ## Run
 
+Set `MEA_M3_PRIVATE` to the private M3 directory (or pass `--private`); runs
+default to its `runs/` subdirectory.
+
 ~~~sh
 python3 -B benchmarks/reviewbench/v4/m3.py capture --refs PRIVATE/selection/refs.txt
 python3 -B benchmarks/reviewbench/v4/m3.py run --plan PLAN.json --set dev --round r1 --arm static --rep 1

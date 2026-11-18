@@ -11,6 +11,7 @@ per request, no retries. Private inputs and outputs live under --private (never 
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -29,7 +30,8 @@ import plan as planning  # noqa: E402
 import provider  # noqa: E402
 import score as scoring  # noqa: E402
 
-PRIVATE = Path('/home/ubuntu/projects/mea-private-restored-20261117/m3')
+# Private M3 directory (samples, runs, ledger). Never inside the repository; set --private or MEA_M3_PRIVATE.
+PRIVATE = Path(os.environ['MEA_M3_PRIVATE']) if os.environ.get('MEA_M3_PRIVATE') else None
 NANO = 1_000_000_000
 
 
@@ -503,7 +505,8 @@ def cmd_agreement(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--private', type=Path, default=PRIVATE)
+    parser.add_argument('--private', type=Path, default=PRIVATE, required=PRIVATE is None,
+                        help='private M3 directory (default: $MEA_M3_PRIVATE)')
     sub = parser.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('capture')
     c.add_argument('--refs', required=True)
@@ -514,7 +517,7 @@ def main(argv=None):
         p.add_argument('--plan-sha256')
         p.add_argument('--set', choices=planning.SETS, required=True)
         p.add_argument('--round', required=True)
-        p.add_argument('--runs', type=Path, default=PRIVATE / 'runs')
+        p.add_argument('--runs', type=Path, help='run directory (default: PRIVATE/runs)')
         if name in ('run', 'judge'):
             p.add_argument('--confirm-real-provider', action='store_true')
             p.add_argument('--only')
@@ -528,6 +531,8 @@ def main(argv=None):
         if name == 'agreement':
             p.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)
+    if getattr(args, 'runs', 0) is None:
+        args.runs = args.private / 'runs'
     return dict(capture=cmd_capture, run=cmd_run, judge=cmd_judge, score=cmd_score,
                 **{'agreement-packet': cmd_agreement_packet, 'agreement': cmd_agreement})[args.cmd](args)
 

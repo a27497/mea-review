@@ -55,5 +55,40 @@ class HumanReviewApiTests(unittest.TestCase):
         self.assertEqual(len(r['versions']),5);self.assertEqual(r['comparisons'][2]['rows'][0]['status'],'OUTDATED')
         self.assertEqual(self.server.human_reviews.remote.read(dict(repository='mea-owned/phase4-demo',number=1))['post_attempts'],0)
 
+    def test_disposition_is_bound_to_candidate_version_without_affecting_publication(self):
+        _, first = self.call('demo', dict(version='v1'))
+        _, review = self.call('create', dict(task_id=first['task_id']))
+        self.assertEqual(review['dispositions'], [])
+        candidate = review['tasks'][0]['candidates'][0]
+        binding = dict(review_id=review['id'], task_id=first['task_id'], candidate_id=candidate['id'])
+        for changes, error in [
+            (dict(disposition=[]), 'DISPOSITION_INVALID'),
+            (dict(task_id='task-' + '0' * 64), 'REVIEW_VERSION_NOT_LINKED'),
+            (dict(candidate_id='candidate-' + '0' * 64), 'CANDIDATE_NOT_FOUND'),
+        ]:
+            status, body = self.call('disposition', dict(dict(binding, disposition='IGNORED'), **changes))
+            self.assertEqual((status, body['error']), (400, error))
+        self.assertEqual(self.call('disposition', dict(binding, disposition='ACCEPTED'), origin='https://evil.invalid')[0], 403)
+        for judgment in ['ACCEPTED', 'IGNORED', 'UNDECIDED']:
+            payload = dict(binding, disposition=judgment)
+            status, record = self.call('disposition', payload)
+            self.assertEqual(status, 200)
+            self.assertEqual(record['identity']['anchor'], candidate['change'])
+            self.assertEqual(record['disposition'], judgment)
+            self.assertEqual(self.call('disposition', payload), (status, record))
+            _, restored = self.call('review/' + review['id'])
+            self.assertEqual(restored['dispositions'], [record])
+            self.assertEqual(restored['drafts'], [])
+            self.assertEqual(restored['sends'], [])
+        _, next_task = self.call('demo', dict(version='v2'))
+        _, increment = self.call('increment', dict(review_id=review['id'], task_id=next_task['task_id']))
+        updated = dict(binding, task_id=next_task['task_id'], candidate_id=increment['tasks'][1]['candidates'][0]['id'])
+        self.assertEqual(self.call('disposition', dict(updated, disposition='ACCEPTED'))[0], 200)
+        _, restored = self.call('review/' + review['id'])
+        self.assertEqual({d['task_id']: d['disposition'] for d in restored['dispositions']},
+                         {first['task_id']: 'UNDECIDED', next_task['task_id']: 'ACCEPTED'})
+        self.assertEqual(restored['sends'], [])
+        self.assertEqual(self.server.human_reviews.remote.read(dict(repository='mea-owned/phase4-demo',number=1))['post_attempts'],0)
+
 
 if __name__=='__main__':unittest.main()

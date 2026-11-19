@@ -16,7 +16,7 @@ const v4 = JSON.parse(await readFile(path.join(root, 'fixtures/review/v4.json'),
 const cleanEnv = {PATH:process.env.PATH, LANG:'C.UTF-8'};
 const py = (code,args) => execFileSync('python3',['-B','-c',code,...args],{cwd:root,env:cleanEnv,encoding:'utf8'});
 let server, base, browser, log = '';
-const contexts=[], errors=[], external=[], flows=[], writes=[], screenshots=[];
+const contexts=[], errors=[], consoleErrors=[], external=[], flows=[], writes=[], screenshots=[];
 async function start(session, port = 0) {
   server = spawn('python3', ['-B', '-m', 'mea', 'serve', '--port', String(port), '--task-dir', session],
     {cwd:root, env:cleanEnv, stdio:['ignore','pipe','pipe']});
@@ -50,7 +50,11 @@ async function page(width,height) {
     return r.continue();
   });
   await c.tracing.start({screenshots:true,snapshots:true});
-  const p=await c.newPage();p.setDefaultTimeout(9000);p.on('pageerror',e=>errors.push(e.message));return p;
+  const p=await c.newPage();
+  p.setDefaultTimeout(9000);
+  p.on('pageerror',e=>errors.push(e.message));
+  p.on('console', message => {if (message.type() === 'error') consoleErrors.push(message.text());});
+  return p;
 }
 const btn=(p,name)=>p.getByRole('button',{name,exact:true});
 const rail=p=>p.locator('#review');
@@ -68,21 +72,24 @@ async function guide(p,name){
   await expect(dialog).toBeHidden();
 }
 async function mode(p,name){
-  if(p.viewportSize().width===390){await p.locator('#switch > summary').click();await btn(p.locator('#switch'),name).click();}
+  if(p.viewportSize().width<=880){await p.locator('#switch > summary').click();await btn(p.locator('#switch'),name).click();}
   else await btn(p.getByRole('navigation',{name:'Review cases'}),name).click();
 }
 async function shot(p,name){
   await p.evaluate(()=>document.fonts.ready);
   const layout=await p.evaluate(()=>({
     width:innerWidth,height:innerHeight,scroll:document.documentElement.scrollWidth,
-    sections:[...document.querySelectorAll('.top,.intro,.panes,.files,.code,.review,footer')].filter(n=>n.offsetWidth).map(n=>{
+    sections:[...document.querySelectorAll('.top,.inbox,.intro,.panes,.files,.code,.review,footer')].filter(n=>n.offsetWidth).map(n=>{
       const r=n.getBoundingClientRect();return [n.id||n.className||n.tagName,r.x,r.y,r.width,r.height];
     }),
     fonts:[...document.fonts].map(f=>[f.family,f.status]),
   }));
   assert.equal(layout.width,p.viewportSize().width);assert.equal(layout.height,p.viewportSize().height);assert.equal(layout.scroll,layout.width);
-  assert.equal(layout.fonts.filter(([,s])=>s==='loaded').length,2);
-  if(layout.width===1440) assert.deepEqual(['files','code','review'].map(key=>layout.sections.find(r=>r[0]===key)[3]),[210,907,323]);
+  assert.equal(layout.fonts.filter(([,s])=>s==='loaded').length,
+    await p.locator('.inbox-state').isVisible() ? 1 : 2);
+  if(layout.width===1440 && layout.sections.some(r=>r[0]==='files')) {
+    assert.deepEqual(['files','code','review'].map(key=>layout.sections.find(r=>r[0]===key)[3]),[228,758,378]);
+  }
   await p.screenshot({path:path.join(out,name+'.png'),animations:'disabled'});
   screenshots.push({name,...layout});
 }
@@ -116,7 +123,7 @@ try {
   await start(session);
   browser = await chromium.launch({executablePath:process.env.MEA_BROWSER || undefined,
     args:['--disable-background-networking','--no-proxy-server','--disable-dev-shm-usage']});
-  const d = await page(1440,940), m = await page(390,844);
+  const d = await page(1440,940), t = await page(768,900), m = await page(390,844);
   const data = async (p, route) => {
     const response = await p.request.get(base + route);
     assert.equal(response.status(), 200);
@@ -129,10 +136,28 @@ try {
   assert.equal((await d.request.get(base + '/classic')).status(), 200);
   assert.equal((await data(d, '/api/human/status')).live_publish, false);
   assert.equal((await data(d, '/api/investigation-provider')).real_enabled, false);
+  const inbox = p => p.locator('#inbox');
+  const queue = p => inbox(p).locator('.inbox-row');
+  const search = p => inbox(p).getByRole('searchbox', {name: 'Search'});
+  let respond;
+  const waitForList = new Promise(resolve => { respond = resolve; });
+  await d.route(base + '/api/tasks', async route => {
+    await waitForList;
+    await route.fulfill({contentType:'application/json', body:'invalid JSON'});
+  }, {times:1});
   await d.goto(base);
-  await expect(d.locator('#intro')).toContainText('Review a frozen pull request');
+  await expect(inbox(d).getByRole('heading', {name:'PR Inbox'})).toBeVisible();
+  await expect(inbox(d).getByRole('status')).toHaveText('Loading saved records…');
+  respond();
+  await expect(inbox(d)).toContainText('Could not load investigations');
+  await btn(inbox(d),'Retry').click();
+  await expect(inbox(d)).toContainText('No saved pull requests');
+  await expect(inbox(d).getByRole('link', {name:'Import snapshot'})).toHaveAttribute('href','/classic');
   assert.deepEqual(await data(d, '/api/tasks'), []);
   assert.deepEqual(await data(d, '/api/human/reviews'), []);
+  assert.deepEqual(writes, []);
+  await shot(d,'desktop-inbox-empty');
+  flows.push('Bare Inbox loads read-only and presents loading, retry, empty state and import.');
   await guide(d,'Completed');
   await expect(rail(d).locator('.outcome-code')).toHaveText('ZERO_CANDIDATES');
   const recordId = new URL(d.url()).searchParams.get('task');
@@ -169,6 +194,64 @@ try {
   await expect(d.locator('#code header')).toContainText('quota.py');await shot(d,'desktop-02-human');
   await m.reload();await mode(m,'Human review');await panel(m,'Diff');
   await expect(m.locator('#code header')).toContainText('quota.py');await shot(m,'mobile-02-human');
+  const reviewId=new URL(d.url()).searchParams.get('review');
+  await t.goto(base);
+  await expect(queue(t)).toHaveCount(3);
+  const reviewPR = (await data(t, '/api/human/review/' + reviewId)).pr;
+  for (const term of [reviewPR.repository.toUpperCase(), '#' + reviewPR.number, reviewPR.title.split(' ').at(-1)]) {
+    await search(t).fill(term);
+    await expect(queue(t).filter({hasText:reviewPR.title}).first()).toBeVisible();
+  }
+  await search(t).fill('unmatched-pull-request');
+  await expect(inbox(t)).toContainText('No matching records');
+  await btn(inbox(t),'Clear filters').click();
+  await expect(search(t)).toBeFocused();
+  await inbox(t).getByLabel('Group').selectOption('reviews');
+  await expect(queue(t)).toHaveCount(1);
+  await queue(t).first().press('Enter');
+  await expect(inbox(t)).toBeHidden();
+  await expect(rail(t).getByRole('heading',{name:'Finding',exact:true})).toBeVisible();
+  const disposition = (p, name) => rail(p).getByRole('group', {name:'Human judgment'}).getByRole('button',{name,exact:true});
+  const beforeJudgment = writes.length;
+  await disposition(t,'Ignore').press('Enter');
+  await expect(disposition(t,'Ignore')).toHaveAttribute('aria-pressed','true');
+  await t.reload();
+  await expect(disposition(t,'Ignore')).toHaveAttribute('aria-pressed','true');
+  await expect(btn(t,'Send to Mock')).toHaveCount(0);
+  await disposition(t,'Undecided').click();
+  await expect(t.locator('#disposition-status')).toHaveText('Local judgment · Undecided');
+  await disposition(t,'Accept').click();
+  await expect(t.locator('#disposition-status')).toHaveText('Local judgment · Accepted');
+  assert.deepEqual(writes.slice(beforeJudgment), Array(3).fill('/api/human/disposition'));
+  const judged = await data(t, '/api/human/review/' + reviewId);
+  assert.equal(judged.dispositions[0].disposition, 'ACCEPTED');
+  assert.deepEqual(judged.drafts, []);
+  assert.deepEqual(judged.sends, []);
+  await shot(t,'tablet-01-finding');
+  for (const [p,prefix] of [[t,'tablet'],[m,'mobile']]) {
+    await panel(p,'Review');
+    const caller = rail(p).getByRole('button',{name:/Caller evidence.*app.py/});
+    await caller.press('Enter');
+    await expect(p.locator('#code header')).toContainText('HEAD');
+    await expect(located(p)).toHaveAttribute('data-head','4');
+    await expect(located(p)).toBeFocused();
+    await shot(p,prefix+'-caller-evidence');
+    await p.reload();
+    await expect(located(p)).toHaveAttribute('data-head','4');
+    await btn(p,'Back to review').press('Enter');
+    await expect(caller).toBeFocused();
+    await panel(p,'Files');
+    const fileSearch = p.getByRole('searchbox',{name:'Filter files'});
+    await fileSearch.fill('quota.py');
+    await expect(p.locator('#files .tree-row')).toHaveCount(1);
+    await p.locator('#files').getByRole('button',{name:'quota.py',exact:true}).press('Enter');
+    await expect(p.locator('#code')).toBeFocused();
+    await expect(p.locator('#code header')).toContainText('quota.py');
+  }
+  await t.locator('#inbox-link').click();
+  await expect(queue(t)).toHaveCount(3);
+  await shot(t,'tablet-inbox');
+  flows.push('Inbox search and group filters, keyboard entry and return, local judgment/reload, and exact keyboard evidence round trips on tablet and phone.');
   await btn(d,'Open candidate · L2').click();await rail(d).getByRole('button',{name:/Select candidate/}).click();
   await expect(located(d)).toHaveAttribute('data-head','2');
   await rail(d).getByRole('button',{name:/Caller evidence.*app.py:4/}).click();await expect(located(d)).toHaveAttribute('data-head','4');
@@ -183,7 +266,6 @@ try {
   await confirm(d,body,'quota.py:2 RIGHT');await shot(d,'desktop-exact-confirmation');
   await btn(d,'Send to Mock').dblclick({delay:10}).catch(()=>{});
   await status(d,'MOCK_PUBLISHED');
-  const reviewId=new URL(d.url()).searchParams.get('review');
   flows.push('Mock v1: candidate and caller, revision invalidates confirmation, exact confirmation, one dispatch.');
 
   await m.reload();await mode(m,'Re-review');await panel(m,'Compare');
@@ -233,13 +315,61 @@ try {
   const same=await d.request.post(base+'/api/human/compare-linked',{data:{review_id:reviewId,old_task_id:ids[1],new_task_id:ids[4]}});
   assert.deepEqual(await same.json(),h);
   await d.reload();await expect(rail(d).getByText('NEEDS_RECHECK',{exact:true}).first()).toBeVisible();
-  await d.locator('#switch > summary').click();await btn(d,'Saved workspaces').click();
-  await expect(d.getByRole('dialog')).toContainText('Saved investigations');
-  await expect(d.getByRole('dialog')).toContainText('Saved human reviews');
-  await d.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();
-  await d.goto(base + '/?task=' + record.id);
+  await shot(d,'desktop-needs-recheck');
+  await d.locator('#switch > summary').click();
+  await d.getByRole('link',{name:'Saved workspaces',exact:true}).click();
+  await expect(inbox(d)).toContainText('Saved investigations');
+  await expect(inbox(d)).toContainText('Saved human reviews');
+  await shot(d,'desktop-inbox-populated');
+  const lastVersion = h.tasks.at(-1);
+  const savedReview = queue(d).filter({hasText:'Owned Mock'});
+  await expect(savedReview).toContainText(lastVersion.view.revisions.head.slice(0,7));
+  await savedReview.click();
+  await expect(d.locator('#intro h1')).toHaveText(lastVersion.pr.title);
+  assert.equal(new URL(d.url()).searchParams.get('version'),lastVersion.id);
+  await d.locator('#inbox-link').click();
+  await queue(d).filter({hasText:record.pr.title}).click();
   await expect(rail(d).locator('.outcome-code')).toHaveText('ZERO_CANDIDATES');
   flows.push('Five persisted versions and all five outcomes, linked endpoint order/membership/idempotence, exports and task reopen.');
+
+  const snapshot = JSON.parse(await readFile(path.join(root,'fixtures/demo/none-return.json'),'utf8'));
+  const longPath = 'tests/application/integrations/worker-quota/limits-and-fallbacks/test_lookup.py';
+  const extraFile = snapshot.files.find(file => file.path === 'tests/test_lookup.py');
+  extraFile.path = longPath;
+  extraFile.base_path = longPath;
+  snapshot.scope.complete_listing = false;
+  snapshot.scope.reported_changed_files++;
+  const stopped = await m.request.post(base + '/api/tasks', {data:{snapshot, budget:{tools:1}}});
+  assert.equal(stopped.status(), 200);
+  const stoppedId = (await stopped.json()).id;
+  await expect.poll(async () => (await data(m, '/api/task/' + stoppedId)).status).toBe('STOPPED');
+  await m.goto(base);
+  await inbox(m).getByLabel('Status').selectOption('STOPPED');
+  await expect(queue(m)).toHaveCount(1);
+  await expect(queue(m).first()).toContainText('Offline policy');
+  await shot(m,'mobile-inbox-stopped');
+  await queue(m).first().click();
+  await panel(m,'Files');
+  await m.getByRole('searchbox',{name:'Filter files'}).fill('worker-quota/limits');
+  await expect(m.locator('#files .tree-row')).toHaveCount(1);
+  await m.locator('#files').getByRole('button',{name:longPath,exact:true}).press('Enter');
+  await expect(m.locator('#code header')).toContainText(longPath);
+  await shot(m,'mobile-long-path');
+  await panel(m,'Review');
+  await expect(rail(m)).toContainText('Investigation stopped');
+  await expect(rail(m)).toContainText('1 of 1 tool calls');
+  await expect(rail(m).locator('.outcome-code')).toHaveText('TOOL_BUDGET');
+  await expect(rail(m)).toContainText('The frozen file listing is incomplete.');
+  await expect(m.locator('#intro')).toContainText('Partial capture');
+  await shot(m,'mobile-stopped');
+  const stale = new URLSearchParams({case:'human', review:reviewId, version:ids[1], file:'quota.py', side:'head', line:'2'});
+  await m.goto(base + '/?' + stale);
+  await expect(m.locator('#code .evidence-alert')).toHaveText('File not collected in this frozen version · quota.py');
+  await expect(located(m)).toHaveCount(0);
+  await m.reload();
+  await expect(m.locator('#code .evidence-alert')).toBeVisible();
+  await shot(m,'mobile-stale-link');
+  flows.push('An offline task stops at its tool budget, exposes partial capture and a long path, and stale links stay visible after reload at 390 px.');
 
   const audit=JSON.parse(py(`
 import json,sqlite3,sys
@@ -252,7 +382,7 @@ print(json.dumps(dict(attempts=mock['post_attempts'],comments=len(mock['comments
 `,[session]));
   assert.deepEqual(audit,{attempts:2,comments:2,send_states:['MOCK_PUBLISHED','MOCK_PUBLISHED_RECONCILED'],real_tasks:0});
   assert.equal(writes.filter(r=>r==='/api/human/send').length,2);
-  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  assert.deepEqual(errors,[]);assert.deepEqual(consoleErrors,[]);assert.deepEqual(external,[]);
   const port = Number(new URL(base).port);
   await stop();
   await start(session, port);
@@ -266,13 +396,13 @@ print(json.dumps(dict(attempts=mock['post_attempts'],comments=len(mock['comments
   flows.push('Server restart preserves all reviews and outcomes. A clean SQLite directory starts with empty state.');
   await checkReviewProvenance(d, base, root, path.join(out, 'fresh-task-db'));
   flows.push('The desktop header and candidate card distinguish saved Real and deterministic Mock sources from Mock writeback.');
-  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  assert.deepEqual(errors,[]);assert.deepEqual(consoleErrors,[]);assert.deepEqual(external,[]);
   await writeFile(path.join(out,'verification.json'),JSON.stringify({status:'PASS',flows,screenshots,
-    errors,external,writes,audit,real_model_requests:0,real_github_writes:0,exit_code:0},null,2)+'\n');
+    errors,consoleErrors,external,writes,audit,real_model_requests:0,real_github_writes:0,exit_code:0},null,2)+'\n');
   console.log('PASS: desktop and mobile source navigation, candidate provenance, confirmation, Mock reconciliation, five comparison outcomes and persistence.');
 } catch(error) {
   for(const [i,c] of contexts.entries()) await c.pages()[0]?.screenshot({path:path.join(out,'failure-'+i+'.png')}).catch(()=>{});
-  await writeFile(path.join(out,'failure.json'),JSON.stringify({flows,screenshots,errors,external,writes,message:error.stack,exit_code:1},null,2));
+  await writeFile(path.join(out,'failure.json'),JSON.stringify({flows,screenshots,errors,consoleErrors,external,writes,message:error.stack,exit_code:1},null,2));
   throw error;
 } finally {
   for(const [i,c] of contexts.entries()) await c.tracing.stop({path:path.join(out,'trace-'+i+'.zip')});

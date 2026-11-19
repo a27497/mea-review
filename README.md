@@ -38,10 +38,10 @@ From a clean clone with Docker and Compose installed:
 docker compose up --build
 ```
 
-Open [the local workbench](http://127.0.0.1:8810), then choose **Demo guide**. The default workbench uses synthetic frozen snapshots, deterministic investigations and simulated GitHub. It needs no credentials. [Container settings](compose.yaml)
+Open [the local workbench](http://127.0.0.1:8810). The **PR Inbox** lists saved investigations and human reviews. Choose **Import snapshot** to open the classic task controls or **Demo guide** to load a synthetic example. The demo uses frozen snapshots, deterministic investigations and simulated GitHub. It needs no credentials. [Container settings](compose.yaml)
 
 - **Completed** opens an investigation. Expand the tool trace and select a citation to see its original side, revision and line.
-- **Human review** opens a Mock candidate. Review its evidence, edit the draft, preview and confirm the exact comment, then choose **Send to Mock**. Use **Reconcile read-only** if an outcome is uncertain.
+- **Human review** opens a Mock candidate. Inspect its frozen evidence and save a local judgment. To post a Mock comment, create a draft, preview and confirm the exact comment, then choose **Send to Mock**. Use **Reconcile read-only** if an outcome is uncertain.
 - **Re-review** compares frozen heads and shows renamed files, moved lines and outdated anchors.
 
 Compose stores drafts and tasks in temporary container storage. Use `docker compose down` when finished. For local persistence, run [the Python workbench](mea/__main__.py) with `python3 -B -m mea serve --task-dir WORKSPACE_DIR`. Open **Import & task controls** to load a collected snapshot.

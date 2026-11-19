@@ -27,12 +27,13 @@ def post_request(handler):
     try:
         handler.connection.settimeout(5);data=decode(handler.rfile.read(int(sizes[0])))
         action=handler.path.removeprefix('/api/human/')
-        schema={'create':'task_id','demo':'version','draft':'review_id task_id candidate_id','edit':'draft_id body anchor','preview':'draft_id','confirm':'draft_id preview human_confirmed','send':'draft_id confirmation_digest mode','reconcile':'intent_id','release-not-sent':'intent_id human_confirmed','increment':'review_id task_id','compare-linked':'review_id old_task_id new_task_id','mock-state':'version can_comment fault complete_listing'}
+        schema={'create':'task_id','demo':'version','disposition':'review_id task_id candidate_id disposition','draft':'review_id task_id candidate_id','edit':'draft_id body anchor','preview':'draft_id','confirm':'draft_id preview human_confirmed','send':'draft_id confirmation_digest mode','reconcile':'intent_id','release-not-sent':'intent_id human_confirmed','increment':'review_id task_id','compare-linked':'review_id old_task_id new_task_id','mock-state':'version can_comment fault complete_listing'}
         if action not in schema:raise ValueError('HUMAN_ACTION_NOT_ALLOWED')
         fields(data,schema[action])
         if action=='create':result=service.create(data['task_id'])
         elif action=='demo':
             task=demo.run(service.store,data['version']);result=dict(task_id=task['id'],mode=demo.MODE,candidates=len(task['candidates']))
+        elif action=='disposition':result=service.set_disposition(data['review_id'],data['task_id'],data['candidate_id'],data['disposition'])
         elif action=='draft':result=service.draft(data['review_id'],data['task_id'],data['candidate_id'])
         elif action=='edit':result=service.edit(data['draft_id'],data['body'],data['anchor'])
         elif action=='preview':result=service.preview(data['draft_id'])

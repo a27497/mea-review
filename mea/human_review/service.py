@@ -50,6 +50,7 @@ class Service:
             db.execute('BEGIN')
             value=get(db,identifier,'review');value['drafts']=rows(db,'draft',identifier)
             value['sends']=rows(db,'send',identifier)
+            value['dispositions']=rows(db,'disposition',identifier)
         blocks=rereview.head_draft_blocks(value,value['sends'])
         for check in value.get('rereviews',[]):
             if block:=blocks.get(check['new_task_id']):
@@ -84,6 +85,33 @@ class Service:
                 event(value,'created','Local human review workspace; no model request and live publication disabled.');put(db,value)
         if demo.registered(t) and not self.live:self.remote.provision(t)
         return self.open(value['id'])
+
+    def set_disposition(self, review_id, task_id, candidate_id, disposition):
+        if not isinstance(disposition, str) or disposition not in {'ACCEPTED', 'IGNORED', 'UNDECIDED'}:
+            raise ValueError('DISPOSITION_INVALID')
+        with self.store.transaction() as db:
+            review = get(db, review_id, 'review')
+            version = next((v for v in review['versions'] if v['task_id'] == task_id), None)
+            if version is None:
+                raise ValueError('REVIEW_VERSION_NOT_LINKED')
+            task, view = task_checked(self.store, task_id)
+            if version['view_sha256'] != view.sha256 or version['revisions'] != view.value['revisions']:
+                raise ValueError('REVIEW_VIEW_MISMATCH')
+            candidate = next((c for c in task['candidates'] if c['id'] == candidate_id), None)
+            if candidate is None:
+                raise ValueError('CANDIDATE_NOT_FOUND')
+            identity = dict(review_id=review_id, task_id=task_id, candidate_id=candidate_id,
+                            view_sha256=view.sha256, anchor=candidate['change'])
+            value = record('disposition', identity, review_id=review_id, task_id=task_id,
+                           candidate_id=candidate_id, disposition=disposition)
+            exists = db.execute('select 1 from human_records where id=?', (value['id'],)).fetchone()
+            if exists:
+                value = get(db, value['id'], 'disposition')
+                if value['disposition'] == disposition:
+                    return value
+                value['disposition'] = disposition
+            put(db, value)
+        return value
 
     def draft(self,review_id,task_id,candidate_id):
         with self.store.transaction() as db:

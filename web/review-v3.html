@@ -8,40 +8,60 @@
   <script src="/review-v3.js" type="module"></script>
 </head>
 <body>
-  <a class="skip" href="#code">Skip to code</a>
+  <a class="skip" id="skip" href="#inbox">Skip to content</a>
   <header class="top">
-    <a class="brand" href="/" aria-label="MEA Review home"><span class="logo" aria-hidden="true">&lt;/&gt;</span>MEA Review</a>
-    <span class="crumb" id="crumb"></span>
-    <nav class="desktop-cases" aria-label="Review cases">
+    <a class="brand" href="/" aria-label="MEA Review home"><span class="logo" aria-hidden="true">M</span>MEA Review</a>
+    <a class="inbox-link" id="inbox-link" href="/">PR Inbox</a>
+    <nav class="desktop-cases" aria-label="Review cases" hidden>
       <button type="button" data-case="completed">Completed</button>
       <button type="button" data-case="human">Human review</button>
       <button type="button" data-case="compare">Re-review</button>
     </nav>
-    <details class="switch" id="switch">
+    <details class="switch" id="switch" hidden>
       <summary class="button"><span class="switch-label">Switch case</span><span aria-hidden="true">⌄</span></summary>
       <div class="popover">
         <button type="button" data-case="completed">Completed</button>
         <button type="button" data-case="human">Human review</button>
         <button type="button" data-case="compare">Re-review</button>
         <hr>
+        <button type="button" id="switch-demo">Demo guide</button>
         <a href="/classic" id="classic-link">Import &amp; task controls</a>
-        <button type="button" id="saved-open">Saved workspaces</button>
+        <a href="/">Saved workspaces</a>
       </div>
     </details>
   </header>
-  <section class="intro" id="intro" aria-label="Current review"></section>
-  <nav class="panes" aria-label="Workspace panels">
+  <main id="inbox" class="inbox" tabindex="-1">
+    <div class="inbox-inner">
+      <header class="inbox-heading">
+        <div><h1>PR Inbox</h1><p class="muted">Review saved pull request snapshots.</p></div>
+        <div class="actions">
+          <a href="/classic" class="button primary">Import snapshot</a>
+          <button type="button" class="button" id="inbox-demo">Demo guide</button>
+        </div>
+      </header>
+      <form class="inbox-filters" id="inbox-filters" role="search" aria-label="Saved pull requests">
+        <label for="inbox-search">Search <input type="search" id="inbox-search" placeholder="Title, PR number or repository"></label>
+        <label for="inbox-group">Group <select id="inbox-group"><option value="all">All records</option><option value="tasks">Investigations</option><option value="reviews">Human reviews</option></select></label>
+        <label for="inbox-status">Status <select id="inbox-status"><option value="all">All statuses</option></select></label>
+        <button type="button" id="inbox-clear" class="button" disabled>Clear filters</button>
+      </form>
+      <p id="inbox-count" class="inbox-count muted" role="status"></p>
+      <div id="inbox-results" aria-busy="true"></div>
+    </div>
+  </main>
+  <section class="intro" id="intro" aria-label="Current review" hidden></section>
+  <nav class="panes" aria-label="Workspace panels" hidden>
     <button type="button" data-panel="files" aria-controls="files">Files</button>
     <button type="button" data-panel="code" aria-controls="code">Diff</button>
     <button type="button" data-panel="review" aria-controls="review">Review</button>
   </nav>
-  <main id="workspace" class="workspace" data-panel="code">
+  <main id="workspace" class="workspace" data-panel="code" hidden>
     <nav id="files" class="files" tabindex="-1" aria-label="Files and versions"></nav>
     <section id="code" class="code" tabindex="-1" aria-label="Frozen code"></section>
     <aside id="review" class="review" tabindex="-1" aria-label="Review and evidence"></aside>
   </main>
   <div id="notice" class="toast" role="status" hidden></div>
-  <footer id="footer"></footer>
+  <footer id="footer" hidden></footer>
   <dialog id="demo-dialog" aria-labelledby="demo-title">
     <div class="dialog-head"><h2 id="demo-title">MEA Review offline demo</h2><form method="dialog"><button class="button">Close</button></form></div>
     <p class="rail-sub">Start with an owned offline investigation, then try a local draft and compare frozen revisions.</p>
@@ -53,10 +73,6 @@
       <button type="button" class="button saved-row" data-case="compare" aria-describedby="demo-compare">Re-review</button>
       <p id="demo-compare">Five owned Mock revisions. Start with v1 → v2, then choose the other version pairs and inspect each result.</p>
     </div>
-  </dialog>
-  <dialog id="saved-dialog" aria-labelledby="saved-title">
-    <div class="dialog-head"><h2 id="saved-title">Saved workspaces</h2><form method="dialog"><button class="button">Close</button></form></div>
-    <div id="saved-content"></div>
   </dialog>
   <template id="icons">
     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4.5 2.5 8 6 4.5 9.5" stroke-linecap="round" stroke-linejoin="round"/></svg>

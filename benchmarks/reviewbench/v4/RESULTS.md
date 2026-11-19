@@ -16,6 +16,18 @@ Capability: Static is Offline; Direct and Agent are Real model on Real repo
 snapshots; the judge is a Real model (`deepseek-v4-pro`, blind). The Codex
 agreement check is NOT_RUN.
 
+**2026-11-19 update.** An independent Codex reviewer blindly reviewed a
+seeded sample of 37 of the 182 holdout judgments (about 20%) on 2026-11-17.
+Two new Codex sessions repeated the blind review on 2026-11-19, each assessing
+a different part of the same sample. The review packet omitted arm labels,
+repetition numbers and the benchmark judge's verdicts. In both reviews,
+`judge.agreement()` reported verdict agreement of 1.0 and Cohen's κ of 1.0.
+The verdict and `gold_id` pairs agreed on all 37 items in each review.
+
+The sample was small (26 Direct and 11 Agent items). The distinction between
+`MATCH` and `FALSE_POSITIVE` followed a direct comparison with the gold
+defects. Reliability on harder borderline cases remains unestablished.
+
 | Arm | Precision mean (runs) | Recall mean (runs) | F1 mean (min to max) | Candidates per run |
 | --- | --- | --- | --- | --- |
 | Static | undefined (no candidates) | 0.000 | 0.000 | 0, 0, 0 |

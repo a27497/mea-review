@@ -16,8 +16,9 @@ Capability: Static is Offline; Direct and Agent are Real model on Real repo
 snapshots; the judge is a Real model (`deepseek-v4-pro`, blind). The Codex
 agreement check is NOT_RUN.
 
-**2026-11-19 update.** An independent Codex reviewer blindly reviewed a
-seeded sample of 37 of the 182 holdout judgments (about 20%) on 2026-11-17.
+**2026-11-19 update.** The `NOT_RUN` line above records the status before the
+completed reviews. On 2026-11-17, an independent Codex reviewer assessed a
+seeded sample of 37 of the 182 holdout judgments (about 20%) in a blind review.
 Two new Codex sessions repeated the blind review on 2026-11-19, each assessing
 a different part of the same sample. The review packet omitted arm labels,
 repetition numbers and the benchmark judge's verdicts. In both reviews,

@@ -10,7 +10,7 @@
 import {chromium, expect} from '@playwright/test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {cp, mkdir, mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
+import {copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
@@ -241,7 +241,7 @@ try {
   const video = await p.video()?.path();
   await context.close(); await browser.close();
   for (const s of servers) s.kill('SIGINT');
-  if (video) await rename(video, path.join(out, 'demo-raw.webm'));
+  if (video) await copyFile(video, path.join(out, 'demo-raw.webm'));
   await writeFile(path.join(out, 'timeline.json'), JSON.stringify({seconds: (Date.now() - start0) / 1000, external, timeline}, null, 2) + '\n');
   await rm(work, {recursive: true, force: true});
 }

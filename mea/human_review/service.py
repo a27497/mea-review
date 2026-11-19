@@ -88,7 +88,7 @@ class Service:
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         c=next((c for c in t['candidates'] if c['id']==candidate_id),None)
         if not c:raise ValueError('CANDIDATE_NOT_FOUND')
-        self.rereview_block(review,task_id,candidate_id)
+        self.rereview_block(review,task_id,candidate_id,c['change']['side'])
         value=record('draft',dict(review_id=review_id,task_id=task_id,candidate_id=candidate_id),review_id=review_id,task_id=task_id,candidate_id=candidate_id,revision=1,history=[],status='DRAFT',confirmation=None,anchor=copy.deepcopy(c['change']),body=f'{c["title"]}\n\nTrigger: {c["trigger"]}\nImpact: {c["impact"]}\n\nConditional inference; correctness UNADJUDICATED.',source_kind=t['mode'])
         with self.store.transaction() as db:
             try:return get(db,value['id'],'draft')
@@ -113,27 +113,43 @@ class Service:
         return d
 
     @staticmethod
-    def rereview_block(review,task_id,candidate_id,anchor_side=None):
+    def rereview_block(review,task_id,candidate_id,side):
         # An outdated comment is never relocated, and a sent comment is never repeated.
-        for check in review.get('rereviews',[]):
-            if check['new_task_id']!=task_id:continue
-            row=next((x for x in check['candidates'] if x['candidate_id']==candidate_id),None)
-            if row and row['status']=='DUPLICATE_OF_SENT_COMMENT':raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
-            if row and row['status']=='AT_OUTDATED_COMMENT_LOCATION':raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
-            # A result stored before the lineage rule is not recomputed; its NEW head-side rows are not trusted.
-            if anchor_side=='head' or (row and row['change']['side']=='head'):
-                if rereview.legacy(check):raise ValueError('REREVIEW_LEGACY_LINEAGE_UNKNOWN')
-                if rereview.unknown_lineage(check):raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+        checks = {check['new_task_id']: check for check in review.get('rereviews', [])}
+        current = checks.get(task_id)
+        if current:
+            row = next((x for x in current['candidates'] if x['candidate_id'] == candidate_id), None)
+            if row and row['status'] == 'DUPLICATE_OF_SENT_COMMENT':
+                raise ValueError('REREVIEW_DUPLICATE_OF_SENT_COMMENT')
+            if row and row['status'] == 'AT_OUTDATED_COMMENT_LOCATION':
+                raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+        if side != 'head':
+            return
+        if current and rereview.legacy(current):
+            raise ValueError('REREVIEW_LEGACY_LINEAGE_UNKNOWN')
+        last = None
+        for version in review['versions']:
+            check = checks.get(version['task_id'])
+            if check:
+                if rereview.unknown_lineage(check):
+                    raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
+                last = check
+            if version['task_id'] == task_id:
+                break
+        # A linked version with no re-review cannot use the earlier unresolved file's old path.
+        if not current and last and any(rereview.unresolved_location(row) for row in last['comments']):
+            raise ValueError('REREVIEW_AT_OUTDATED_COMMENT_LOCATION')
 
     def payload(self,d):
         t,v=task_checked(self.store,d['task_id'])
         with self.store.connection() as db:review=get(db,d['review_id'],'review')
-        # Checked on every preview, confirmation and send, not only when a draft is created.
         a=d['anchor'];fields(a,'path side line revision')
-        self.rereview_block(review,d['task_id'],d['candidate_id'],a['side'])
         if t['reason']!='HYPOTHESIS_SUPPORTED':raise ValueError('EVIDENCE_INSUFFICIENT_FOR_COMMENT')
         candidate=next((c for c in t['candidates'] if c['id']==d['candidate_id']),None)
         if not candidate:raise ValueError('CANDIDATE_NOT_FOUND')
+        # Check both the original candidate and the edited anchor on preview, confirmation and send.
+        side = 'head' if 'head' in (a['side'], candidate['change']['side']) else a['side']
+        self.rereview_block(review,d['task_id'],d['candidate_id'],side)
         # Without a live remote, a predecessor-head base is taken as an increment. A live admission instead
         # compares GitHub's merge base with the frozen base: a full snapshot whose merge base is that head is valid.
         if a['side']=='base' and not self.live and self.incremental(review,d['task_id']):raise ValueError('INCREMENT_BASE_SIDE_NOT_COMMENTABLE')

@@ -793,9 +793,7 @@ class WritebackTests(unittest.TestCase):
         partial['files'][0].update(path='independent.py', base_path='independent.py')
         partial['scope'].update(complete_listing=False, reported_changed_files=3)
         t3 = offline_task(self.store, partial)
-        self.fake.push(H3, {'renamed_quota.py': diff(BASE, V2_REPLACE)})
-        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
-        after_v3 = self.s.open(rid)['rereviews'][-1]['comments'][0]
+        self.s.increment(rid, t3['id'])
         # v4: a complete listing that changes the replacement region under the new name.
         latest = snapshot(H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'm4-omit-4')
         latest['files'][0].update(path='renamed_quota.py', base_path='renamed_quota.py')
@@ -803,12 +801,16 @@ class WritebackTests(unittest.TestCase):
         t4 = offline_task(self.store, latest)
         self.assertEqual((t4['reason'], [c['change']['path'] for c in t4['candidates']]), ('HYPOTHESIS_SUPPORTED', ['renamed_quota.py']))
         self.fake.push(h4, {'renamed_quota.py': diff(BASE, V3_REPLACE_AGAIN)})
-        # A draft made after linking v4 but before its re-review.
+        # A draft made before the earlier re-review detects the omitted rename.
         self.s.increment(rid, t4['id'])
         out = self.root / 'draft.json'
         code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'], out=out)
         self.assertEqual(code, 0, printed)
         draft_id = json.loads(out.read_bytes())['draft_id']  # local command: no GitHub request log
+        self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t3['id'])[0], 0)
+        after_v3 = self.s.open(rid)['rereviews'][-1]['comments'][0]
+        code, printed = self.run_cli('preview', '--draft', draft_id)
+        self.assertEqual((code, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION' in printed), (2, True))
         self.assertEqual(self.run_cli('rereview', '--review', rid, '--task-id', t4['id'])[0], 0)
         check = self.s.open(rid)['rereviews'][-1]
         code, printed = self.run_cli('draft', '--review', rid, '--task-id', t4['id'], '--candidate', t4['candidates'][0]['id'])
@@ -824,6 +826,67 @@ class WritebackTests(unittest.TestCase):
 
 
     # ---- M5: lineage that cannot be re-established ---------------------------------------------
+
+    def test_omitted_rename_blocks_later_linked_versions_with_incomplete_listings(self):
+        self.assert_omitted_rename_blocks_later_versions(complete=False)
+
+    def test_omitted_rename_blocks_later_linked_versions_with_complete_listings(self):
+        self.assert_omitted_rename_blocks_later_versions(complete=True)
+
+    def assert_omitted_rename_blocks_later_versions(self, complete):
+        self.sent()
+        rid = self.r['id']
+        local = Service(self.store)
+        h4 = '4' * 40
+        # v2 omits quota.py -> renamed_quota.py. Later listings may be partial or
+        # complete, but see only the new name, with no link over the missing step.
+        increments = [
+            (H1, H2, BASE, V1, 'independent.py', False),
+            (H2, H3, V1, V2_REPLACE, 'renamed_quota.py', complete),
+            (H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'renamed_quota.py', complete),
+        ]
+        pending = []
+        for base, head, before, after, path, complete in increments:
+            value = snapshot(base, head, before, after, 'm5-chain-' + head[0])
+            value['files'][0].update(path=path, base_path=path)
+            caller = side(CALLER.replace('from quota', 'from ' + path.removesuffix('.py')))
+            value['files'][1]['sides'] = dict(base=caller, head=caller)
+            value['scope'].update(complete_listing=complete, reported_changed_files=2 if complete else 3)
+            task = offline_task(self.store, value)
+            self.assertEqual([c['change']['path'] for c in task['candidates']], [path])
+            cid = task['candidates'][0]['id']
+            local.increment(rid, task['id'])
+            draft = local.draft(rid, task['id'], cid)
+            pending.append((task['id'], cid, draft['id'], local.preview(draft['id'])))
+
+        def assert_blocked(stage):
+            for index, (task_id, cid, draft_id, preview) in enumerate(pending, start=2):
+                with self.subTest(stage=stage, version=index, action='draft'):
+                    with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+                        local.draft(rid, task_id, cid)
+                with self.subTest(stage=stage, version=index, action='preview'):
+                    with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+                        local.preview(draft_id)
+                with self.subTest(stage=stage, version=index, action='confirm'):
+                    with self.assertRaisesRegex(ValueError, 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'):
+                        local.confirm(draft_id, preview, True)
+
+        local.rereview(rid, pending[0][0])
+        assert_blocked('later versions linked only')
+        # Simulate an existing v2 result that recorded only the older reason.
+        with self.store.transaction() as db:
+            review = get(db, rid, 'review')
+            review['rereviews'][0]['comments'][0].pop('replaced_region_unresolved', None)
+            db.execute('update human_records set doc=? where id=?', (json.dumps(review), rid))
+        assert_blocked('older result without marker')
+        for task_id, *_ in pending[1:]:
+            check = local.rereview(rid, task_id)['rereviews'][-1]
+            with self.subTest(stage='re-review', task_id=task_id):
+                marker = check['comments'][0].get('replaced_region_unresolved', {})
+                self.assertEqual(marker.get('lineage'), 'UNKNOWN')
+        assert_blocked('all versions reviewed')
+        self.assertEqual(local.draft(rid, self.t1['id'], self.t1['candidates'][0]['id'])['id'], self.d['id'])
+        self.assertEqual(self.posts(), 1)
 
     def test_reused_path_after_an_omitted_rename_keeps_the_lineage_unknown(self):
         first = self.sent()
@@ -993,6 +1056,12 @@ class AnchorMappingTests(unittest.TestCase):
         removed = dict(path='a.py', base_path='a.py', status='removed', patch=None, sides=dict(base=dict()))
         row, statuses = run([removed], 'a.py')
         self.assertEqual((row.get('replaced_region_unresolved'), statuses), (None, ['NEW']))
+
+    def test_added_file_cannot_shadow_a_rename_from_the_same_base_path(self):
+        added = dict(path='a.py', base_path='a.py', status='added')
+        renamed = dict(path='b.py', base_path='a.py', status='renamed')
+        self.assertIs(rereview.changed_file(dict(files=[added, renamed]), 'a.py'), renamed)
+        self.assertIsNone(rereview.changed_file(dict(files=[added]), 'a.py'))
 
     def test_unknown_lineage_blocks_every_head_file_and_is_never_cleared_by_a_listing(self):
         old = dict(view=dict(revisions=dict(head=H3), files=[]), candidates=[])

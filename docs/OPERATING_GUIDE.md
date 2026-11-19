@@ -176,10 +176,17 @@ A refused re-review leaves the existing links and confirmations in place.
 When a later listing includes the last known path, the old name may now
 belong to a different file. The current frozen inputs cannot establish
 continuity across the missing increment, so UNKNOWN persists in later
-versions of that review. A stored re-review without the current lineage rule
-blocks head-side drafting and preview for that version. Legacy replacement
-regions also carry forward as UNKNOWN. Repeating the re-review preserves
-the original mapping and can refresh the read-only remote observation.
+versions of that review.
+
+- **Pre-M5 review workspaces.** Every saved re-review without a `lineage_rule`
+  is treated as `UNKNOWN` even if the workspace has never published a
+  comment. On later versions, the guard rejects head-side `draft` and
+  `preview` with `REREVIEW_AT_OUTDATED_COMMENT_LOCATION` even after a complete
+  re-review. The candidate may still display `NEW`. Start a new review
+  workspace from the current frozen snapshot.
+
+Repeating the re-review preserves the original mapping and can refresh the
+read-only remote observation.
 
 The local Mock guard infers an increment from linked versions. A first version
 has no predecessor for that check. Live admission verifies the merge base

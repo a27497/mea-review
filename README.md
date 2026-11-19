@@ -54,7 +54,9 @@ Compose stores drafts and tasks in temporary container storage. Use `docker comp
 | Experimental | **Real** DeepSeek investigation through the attended CLI, with budgeted tool calls and candidate validation. **Mock** provider protocol rehearsal with simulated requests and spending. |
 | Planned | Automatic capture of a new head and a fresh review triggered by a PR update. The current workflow explicitly captures and compares a new frozen head. |
 
-Capture may be incomplete. The workbench keeps missing, truncated and unavailable evidence visible. An increment can establish that an original comment anchor is outdated without moving the comment. If an incomplete increment leaves the file's lineage unknown, later use of the same name does not establish continuity. Legacy re-reviews with no lineage rule block head-side drafting for the saved version. [Capture and re-review limits](docs/OPERATING_GUIDE.md)
+Capture may be incomplete. The workbench keeps missing, truncated and unavailable evidence visible. An increment can establish that an original comment anchor is outdated without moving the comment. If an incomplete increment leaves the file's lineage unknown, later use of the same name does not establish continuity. [Capture and re-review limits](docs/OPERATING_GUIDE.md)
+
+- **Pre-M5 review workspaces.** The workbench treats every saved re-review without a `lineage_rule` as `UNKNOWN`. It blocks head-side `draft` and `preview` in later versions, even after a complete re-review and even if the workspace has never published a comment. The candidate may still display `NEW`. Start a new review workspace from the current frozen snapshot.
 
 ## Read-only MCP
 

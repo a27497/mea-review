@@ -178,12 +178,12 @@ belong to a different file. The current frozen inputs cannot establish
 continuity across the missing increment, so UNKNOWN persists in later
 versions of that review.
 
-- **Pre-M5 review workspaces.** Every saved re-review without a `lineage_rule`
-  is treated as `UNKNOWN` even if the workspace has never published a
-  comment. On later versions, the guard rejects head-side `draft` and
-  `preview` with `REREVIEW_AT_OUTDATED_COMMENT_LOCATION` even after a complete
-  re-review. The candidate may still display `NEW`. Start a new review
-  workspace from the current frozen snapshot.
+For a pre-M5 re-review saved without a `lineage_rule`, drafting and preview
+are blocked when a sent or possibly sent comment anchor crossed that increment.
+An uncertain send intent counts as a possible anchor. The workbench displays
+the refusal for affected head-side candidates, including on later linked
+versions. A legacy increment with no such anchor allows complete re-reviews
+of later increments and their normal draft and preview workflow.
 
 Repeating the re-review preserves the original mapping and can refresh the
 read-only remote observation.

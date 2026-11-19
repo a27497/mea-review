@@ -557,11 +557,16 @@ function selectHumanVersion(id) {
 function readStatus(d) {
   return d.status === 'CONFIRMED_MOCK_ONLY' ? 'CONFIRMED' : d.status === 'CONFIRMED_LIVE' ? 'CONFIRMED · LIVE' : d.status;
 }
+function candidateBlock(t, candidateId, side, draft) {
+  const check = (state.human.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === candidateId);
+  if (check && check.status !== 'NEW') return check;
+  if (side === 'head' || draft?.anchor.side === 'head') {
+    return state.human.versions.find(x => x.task_id === t.id)?.head_draft_block;
+  }
+}
 function candidateStatus(t, c) {
-  const d = state.human?.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
-  const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
-  const blocked = check && check.status !== 'NEW' ? check.status : null;
-  return blocked || (d ? readStatus(d) : 'NOT DRAFTED');
+  const d = state.human.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
+  return candidateBlock(t, c.id, c.change.side, d)?.status || (d ? readStatus(d) : 'NOT DRAFTED');
 }
 function renderEditor(n,t,c,d) {
   const ctx = current();
@@ -687,8 +692,8 @@ function renderHuman(n,t) {
   }
   const c = candidate(), mock = owns(state.human);
   if (c) {
-    const check = (state.human.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
-    const blocked = check && check.status !== 'NEW';
+    const d = currentDraft();
+    const blocked = candidateBlock(t, c.id, c.change.side, d);
     const meta = el('p'); meta.append(tag('CONDITIONAL','accent'),'  ' + t.candidates.length + ' candidate' + (t.candidates.length === 1 ? '' : 's')); n.append(meta);
     if (t.candidates.length > 1) {
       const list = block(n,'Candidates');
@@ -704,9 +709,8 @@ function renderHuman(n,t) {
     provenance.append(source, ' ', writeback);
     n.append(el('h3',c.title,'candidate-title'),provenance,el('p','If ' + c.trigger.replace(/^If\s+/,'').replace(/\.$/,'') + ', ' + impact.charAt(0).toLowerCase() + impact.slice(1),'rail-sub'));
     block(n,'Citation valid · Semantics unadjudicated', el('p','The changed line and collected source match this frozen revision. Runtime reachability and defect status are unconfirmed.','rail-sub'));
-    const d = currentDraft();
     if (blocked) {
-      n.append(el('p',check.reason,'rail-sub'));
+      n.append(el('p',blocked.reason,'rail-sub'));
     }
     if (!d && !blocked) {
       n.append(card('Select candidate',name(c.change.path) + ':' + c.change.line + ' · changed ' + anchors[c.change.side] + ' line', () => act(async () => {
@@ -758,7 +762,7 @@ function renderRereview(n,t) {
   const section = block(n,'Incremental re-review');
   section.id = 'rereview-status';
   section.append(el('p',check.relation + ' · ' + short(check.old_head) + ' → ' + short(check.new_head),'mono'));
-  if (check.lineage === 'UNKNOWN') section.append(el('p','Legacy re-review. Head-side file lineage is unknown.','rail-sub'));
+  if (check.lineage === 'UNKNOWN') section.append(el('p','An earlier comment anchor has unknown file lineage.','rail-sub'));
   for (const row of check.comments) {
     const where = row.old.path + ':' + row.old.line + ' ' + row.old.side;
     const now = row.new ? ' → ' + row.new.path + ':' + row.new.line : '';
@@ -768,7 +772,9 @@ function renderRereview(n,t) {
   }
   if (!check.comments.length) section.append(el('p','No sent comment to check.','rail-sub'));
   for (const row of check.candidates) {
-    const p = el('p','',''); p.append(tag(row.status,row.status === 'NEW' ? 'accent' : 'warn'),'  ' + name(row.change.path) + ':' + row.change.line);
+    const d = state.human.drafts.find(x => x.task_id === t.id && x.candidate_id === row.candidate_id);
+    const status = candidateBlock(t, row.candidate_id, row.change.side, d)?.status || row.status;
+    const p = el('p','',''); p.append(tag(status,status === 'NEW' ? 'accent' : 'warn'),'  ' + name(row.change.path) + ':' + row.change.line);
     section.append(p);
   }
   section.append(el('p','Outdated comments stay on their original commit and are never re-posted at a new location.','rail-sub'));

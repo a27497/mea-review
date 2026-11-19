@@ -460,6 +460,32 @@ try {
   flows.push('An offline task stops at its tool budget, exposes partial capture and a long path, and stale links stay visible after reload at 390 px.');
   flows.push('Tab reaches the named overflowing unified diff at 390 px and ArrowRight scrolls it. A short compare listing is outside the tab sequence.');
 
+  const boundaryTitle = 'Repository documentation, review workflow migration, scope verification, and workspace accessibility updates. '
+    .repeat(5).slice(0,500).trim();
+  assert.equal(Buffer.byteLength(boundaryTitle),500);
+  snapshot.pr.title = boundaryTitle;
+  const titleTask = await m.request.post(base + '/api/tasks', {data:{snapshot, budget:{tools:1}}});
+  assert.equal(titleTask.status(),200);
+  const titleTaskId = (await titleTask.json()).id;
+  await expect.poll(async () => (await data(m,'/api/task/' + titleTaskId)).status).toBe('STOPPED');
+  for (const [width,height] of [[390,844],[720,450]]) {
+    await m.setViewportSize({width,height});
+    await m.goto(base + '/?task=' + titleTaskId);
+    await expect(m.locator('#intro h1')).toHaveText(boundaryTitle);
+    await expect.poll(() => m.locator('#code').evaluate(node => node.clientHeight)).toBeGreaterThanOrEqual(120);
+    const firstLine = m.locator('#code .code-line code').first();
+    await firstLine.scrollIntoViewIfNeeded();
+    await expect(firstLine).toBeInViewport();
+    await shot(m,'long-title-' + width);
+    await panel(m,'Files');
+    const filter = m.getByRole('searchbox',{name:'Filter files'});
+    await filter.scrollIntoViewIfNeeded();
+    await expect(filter).toBeInViewport();
+    await panel(m,'Review');
+    await expect(rail(m).locator('.outcome-code')).toHaveText('TOOL_BUDGET');
+  }
+  flows.push('A 500-byte PR title stays readable, and the Diff, Files and Review panels remain usable at 390×844 and 720×450.');
+
   const audit=JSON.parse(py(`
 import json,sqlite3,sys
 from pathlib import Path

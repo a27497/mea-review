@@ -227,8 +227,8 @@ dialog::backdrop{background:#23232b55}
   .panes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;flex:none;padding:0 var(--page-gutter) 12px}
   .panes button{min-height:44px;text-align:left;padding:0 12px;border:1px solid transparent;border-radius:7px;background:var(--surface);font-weight:650}
   .panes button[aria-current]{background:var(--accent-tint);color:var(--accent);border-color:var(--border)}
-  .workspace{display:block;overflow:hidden}
-  .workspace>*{height:100%;display:none}
+  .workspace{display:block;min-height:160px;overflow:hidden}
+  .workspace>*{height:100%;display:none;overscroll-behavior-y:auto}
   .workspace[data-panel=files] #files,.workspace[data-panel=code] #code,.workspace[data-panel=review] #review{display:block}
   .files,.review{padding:14px 16px 20px}
   .tree-row,.pair-row,.file-search,.rail-card,.review .button{min-height:44px}

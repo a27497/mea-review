@@ -51,6 +51,7 @@ async function page(width,height) {
     return r.continue();
   });
   await c.tracing.start({screenshots:true,snapshots:true});
+  await c.addInitScript(() => { if (!localStorage.getItem('mea.language')) localStorage.setItem('mea.language', 'en'); });
   const p=await c.newPage();
   p.setDefaultTimeout(9000);
   p.on('pageerror',e=>errors.push(e.message));
@@ -146,7 +147,7 @@ try {
     await waitForList;
     await route.fulfill({contentType:'application/json', body:'invalid JSON'});
   }, {times:1});
-  await d.goto(base);
+  await d.goto(base + '/workbench');
   await expect(inbox(d).getByRole('heading', {name:'PR Inbox'})).toBeVisible();
   await expect(inbox(d).getByRole('status')).toHaveText('Loading saved records…');
   respond();
@@ -196,7 +197,7 @@ try {
   await m.reload();await mode(m,'Human review');await panel(m,'Diff');
   await expect(m.locator('#code header')).toContainText('quota.py');await shot(m,'mobile-02-human');
   const reviewId=new URL(d.url()).searchParams.get('review');
-  await t.goto(base);
+  await t.goto(base + '/workbench');
   await expect(queue(t)).toHaveCount(3);
   const reviewPR = (await data(t, '/api/human/review/' + reviewId)).pr;
   for (const term of [reviewPR.repository.toUpperCase(), '#' + reviewPR.number, reviewPR.title.split(' ').at(-1)]) {
@@ -302,7 +303,7 @@ try {
     assert.equal(new URL(p.url()).searchParams.get('version'), task.id);
   }
   for (const [p, layout] of [[d,'desktop'], [t,'tablet'], [m,'mobile']]) {
-    await p.goto(base);
+    await p.goto(base + '/workbench');
     await expect(reviewRow(p).locator('strong')).toHaveText(v2.pr.title);
     await inbox(p).getByLabel('Group').selectOption('reviews');
     await inbox(p).getByLabel('Investigation status').selectOption({label:'Completed'});
@@ -344,7 +345,7 @@ try {
     assert.ok(tasks.some(task => task.id === v2.id));
     await route.fulfill({response, json:tasks.filter(task => task.id !== v2.id)});
   }, {times:1});
-  await t.goto(base);
+  await t.goto(base + '/workbench');
   await expect(reviewRow(t).locator('strong')).toHaveText(v2.pr.repository + ' #' + v2.pr.number);
   await expect(reviewRow(t)).not.toContainText(v1.pr.title);
   await expect(reviewRow(t).locator('.inbox-head')).toHaveAttribute('title',v2Head);
@@ -423,7 +424,7 @@ try {
   assert.equal(stopped.status(), 200);
   const stoppedId = (await stopped.json()).id;
   await expect.poll(async () => (await data(m, '/api/task/' + stoppedId)).status).toBe('STOPPED');
-  await m.goto(base);
+  await m.goto(base + '/workbench');
   await inbox(m).getByLabel('Investigation status').selectOption({label:'Stopped'});
   await expect(inbox(m).getByLabel('Investigation status')).toHaveValue('STOPPED');
   await expect(queue(m)).toHaveCount(1);

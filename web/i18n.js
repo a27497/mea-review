@@ -9,7 +9,7 @@ function initialLanguage() {
     const saved = localStorage.getItem(preference);
     if (supported.has(saved)) return saved;
   } catch { /* Locale defaults still work when storage is unavailable. */ }
-  return /^zh(?:-|$)/i.test(navigator.language) ? 'zh-CN' : 'en';
+  return 'zh-CN';
 }
 
 let language = initialLanguage();

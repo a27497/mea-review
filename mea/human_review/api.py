@@ -1,6 +1,6 @@
 """Same-origin local API; only explicit Mock side effects, no live transport."""
 from ..contract import decode,fields
-from . import demo
+from . import demo, risk_demo
 from .publisher import Publisher
 
 
@@ -27,6 +27,9 @@ def post_request(handler):
     try:
         handler.connection.settimeout(5);data=decode(handler.rfile.read(int(sizes[0])))
         action=handler.path.removeprefix('/api/human/')
+        if action=='risk-demo':
+            fields(data,'')
+            return handler.send(200, dict(review_id=risk_demo.seed(service)))
         schema={'create':'task_id','demo':'version','disposition':'review_id task_id candidate_id disposition','draft':'review_id task_id candidate_id','edit':'draft_id body anchor','preview':'draft_id','confirm':'draft_id preview human_confirmed','send':'draft_id confirmation_digest mode','reconcile':'intent_id','release-not-sent':'intent_id human_confirmed','increment':'review_id task_id','compare-linked':'review_id old_task_id new_task_id','mock-state':'version can_comment fault complete_listing'}
         if action not in schema:raise ValueError('HUMAN_ACTION_NOT_ALLOWED')
         fields(data,schema[action])

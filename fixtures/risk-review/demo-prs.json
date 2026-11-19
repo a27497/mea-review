@@ -1,0 +1,821 @@
+{
+  "schema": "mea-round3-demo-v1",
+  "locale": "zh-CN",
+  "source": "SYNTHETIC",
+  "active_pr": 248,
+  "entries": [
+    {
+      "snapshot": {
+        "schema": "mea-snapshot-v1",
+        "id": "lantern-dispatch-248",
+        "pr": {
+          "title": "统一任务分发的连接配置",
+          "body": "将分发服务的连接地址和请求超时收拢到统一配置。保留仅配置超时时的默认地址行为，并同步更新开发、预发布配置和部署文档。",
+          "number": 248,
+          "repository": "lantern-lab/dispatch-service",
+          "url": "https://github.com/lantern-lab/dispatch-service/pull/248"
+        },
+        "revisions": {
+          "base": "7b3e98e4f77accc9d49fd0ad10a645c688a98aa2",
+          "head": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+          "target_base": "7b3e98e4f77accc9d49fd0ad10a645c688a98aa2"
+        },
+        "provenance": {
+          "kind": "FROZEN_PENDING_REVIEW",
+          "captured_at": "2026-11-19T09:42:00+00:00",
+          "state_at_capture": "open",
+          "merged_at_capture": false,
+          "pending_review_version": true,
+          "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+          "capture_sha256": "9cac7bb00009215b52da83fa684a1ac2490bd2fa081709a09339bb0298c15de9"
+        },
+        "scope": {
+          "complete_listing": true,
+          "omitted_sources": [],
+          "reported_changed_files": 14
+        },
+        "files": [
+          {
+            "path": "services/dispatch/settings.py",
+            "base_path": "services/dispatch/settings.py",
+            "status": "modified",
+            "patch": "@@ -8,7 +8,7 @@\n \n \n def resolve_endpoint(config: dict) -> str:\n-    endpoint = config.get(\"endpoint\", \"http://dispatch:8080\")\n+    endpoint = config.get(\"endpoint\")\n     return endpoint.rstrip(\"/\")\n \n \n",
+            "sides": {
+              "base": {
+                "text": "from dataclasses import dataclass\n\n\n@dataclass(frozen=True)\nclass DispatchSettings:\n    endpoint: str\n    timeout_ms: int\n\n\ndef resolve_endpoint(config: dict) -> str:\n    endpoint = config.get(\"endpoint\", \"http://dispatch:8080\")\n    return endpoint.rstrip(\"/\")\n\n\ndef load_settings(config: dict) -> DispatchSettings:\n    return DispatchSettings(resolve_endpoint(config), config[\"timeout_ms\"])\n",
+                "sha256": "9f67622f3125f6a2f72d8fdaaac5473dffe34586268269fde1e6dc617720e06f",
+                "blob_sha": "4c7da96ba1bb05b7007fad9ce1e380c723d0b39a"
+              },
+              "head": {
+                "text": "from dataclasses import dataclass\n\n\n@dataclass(frozen=True)\nclass DispatchSettings:\n    endpoint: str\n    timeout_ms: int\n\n\ndef resolve_endpoint(config: dict) -> str:\n    endpoint = config.get(\"endpoint\")\n    return endpoint.rstrip(\"/\")\n\n\ndef load_settings(config: dict) -> DispatchSettings:\n    return DispatchSettings(resolve_endpoint(config), config[\"timeout_ms\"])\n",
+                "sha256": "e3648a285e5f2f42ae201ff6b1fdfce26076e016d3df5d52c1c9e90b793e982c",
+                "blob_sha": "0e9bb5a48c723d8c44b374a84ab2967ceac82136"
+              }
+            }
+          },
+          {
+            "path": "services/dispatch/worker.py",
+            "base_path": "services/dispatch/worker.py",
+            "status": "modified",
+            "patch": "@@ -4,4 +4,4 @@\n \n def create_worker(config: dict) -> DispatchClient:\n     settings = load_settings(config)\n-    return DispatchClient(settings.endpoint)\n+    return DispatchClient(settings.endpoint, timeout_ms=settings.timeout_ms)\n",
+            "sides": {
+              "base": {
+                "text": "from .settings import load_settings\nfrom .transport import DispatchClient\n\n\ndef create_worker(config: dict) -> DispatchClient:\n    settings = load_settings(config)\n    return DispatchClient(settings.endpoint)\n",
+                "sha256": "d9e8d77fa05e1579318deea0bb55ecb10a83a0732b83a57c24dad4da56287c7a",
+                "blob_sha": "5237b5555df6e3af0f800e7384fe0047ecefffc2"
+              },
+              "head": {
+                "text": "from .settings import load_settings\nfrom .transport import DispatchClient\n\n\ndef create_worker(config: dict) -> DispatchClient:\n    settings = load_settings(config)\n    return DispatchClient(settings.endpoint, timeout_ms=settings.timeout_ms)\n",
+                "sha256": "f30117f5d286465e931e30da7ad49c231e080eca5c3644efb0229d8dc4b99593",
+                "blob_sha": "ae1f7fbe97d5b66026ed47eca5d7c365a779338e"
+              }
+            }
+          },
+          {
+            "path": "config/dispatch.toml",
+            "base_path": "config/dispatch.toml",
+            "status": "modified",
+            "patch": "@@ -1,4 +1,3 @@\n [dispatch]\n-endpoint = \"http://dispatch:8080\"\n-timeout_ms = 800\n+timeout_ms = 1200\n max_attempts = 3\n",
+            "sides": {
+              "base": {
+                "text": "[dispatch]\nendpoint = \"http://dispatch:8080\"\ntimeout_ms = 800\nmax_attempts = 3\n",
+                "sha256": "4daad475d1ed772761318c0b64b07c79aec178494cf4cec687ec50f418d238c4",
+                "blob_sha": "a0376c561aa862aadf0cad026239acfbf0607797"
+              },
+              "head": {
+                "text": "[dispatch]\ntimeout_ms = 1200\nmax_attempts = 3\n",
+                "sha256": "8627fb31995861c18035ac777207dc879c35f3fe27ef9ba443118e6b91c58f95",
+                "blob_sha": "98681cc40d4a3c28e7388490e3043eb5e21a994f"
+              }
+            }
+          },
+          {
+            "path": "tests/test_dispatch_settings.py",
+            "base_path": "tests/test_dispatch_settings.py",
+            "status": "modified",
+            "patch": "@@ -2,7 +2,7 @@\n \n \n def test_load_explicit_endpoint():\n-    config = {\"endpoint\": \"http://dispatch:8080/\", \"timeout_ms\": 800}\n+    config = {\"endpoint\": \"http://dispatch:8080/\", \"timeout_ms\": 1200}\n     settings = load_settings(config)\n     assert settings.endpoint == \"http://dispatch:8080\"\n-    assert settings.timeout_ms == 800\n+    assert settings.timeout_ms == 1200\n",
+            "sides": {
+              "base": {
+                "text": "from services.dispatch.settings import load_settings\n\n\ndef test_load_explicit_endpoint():\n    config = {\"endpoint\": \"http://dispatch:8080/\", \"timeout_ms\": 800}\n    settings = load_settings(config)\n    assert settings.endpoint == \"http://dispatch:8080\"\n    assert settings.timeout_ms == 800\n",
+                "sha256": "e53a528c76998d96726ac826e6e5af1a4e0f690413c3edf3b6a12b6feac1ae6d",
+                "blob_sha": "bb5a791b2f43945dc6eecb3d1828b0292a1479f1"
+              },
+              "head": {
+                "text": "from services.dispatch.settings import load_settings\n\n\ndef test_load_explicit_endpoint():\n    config = {\"endpoint\": \"http://dispatch:8080/\", \"timeout_ms\": 1200}\n    settings = load_settings(config)\n    assert settings.endpoint == \"http://dispatch:8080\"\n    assert settings.timeout_ms == 1200\n",
+                "sha256": "cd7c8afd00570455e7d844f5e8b342af44487c5bbca39cee0744d748e63cfb51",
+                "blob_sha": "a63bcc1e74fd08c5bd3202e2b59673b4144bb9d7"
+              }
+            }
+          },
+          {
+            "path": "docs/dispatch-setup.md",
+            "base_path": "docs/dispatch-setup.md",
+            "status": "modified",
+            "patch": "@@ -1,5 +1,5 @@\n # 部署分发服务\n \n 省略 endpoint 时使用默认地址 http://dispatch:8080。\n-单次请求超时为 800ms。\n+单次请求超时为 1500ms。\n 最多重试 3 次。\n",
+            "sides": {
+              "base": {
+                "text": "# 部署分发服务\n\n省略 endpoint 时使用默认地址 http://dispatch:8080。\n单次请求超时为 800ms。\n最多重试 3 次。\n",
+                "sha256": "dd978d36ba56961abb121dd14a637fe82d40291e0d3c6e30df04bbd3a4adf8fa",
+                "blob_sha": "0bbcb918d97bb34cb2f9b21b77bc0632ccc26fd6"
+              },
+              "head": {
+                "text": "# 部署分发服务\n\n省略 endpoint 时使用默认地址 http://dispatch:8080。\n单次请求超时为 1500ms。\n最多重试 3 次。\n",
+                "sha256": "7fc9026640c0be95582d47454a10760674cf2c109212b5c2c1c40436e15131c4",
+                "blob_sha": "c6b905190d72cd3da751b25e580778a2cef6bb2f"
+              }
+            }
+          },
+          {
+            "path": "services/dispatch/transport.py",
+            "base_path": "services/dispatch/transport.py",
+            "status": "modified",
+            "patch": "@@ -2,7 +2,7 @@\n \n \n class DispatchClient:\n-    def __init__(self, endpoint: str, timeout_ms: int = 800):\n+    def __init__(self, endpoint: str, timeout_ms: int = 1200):\n         self.endpoint = endpoint\n         self.timeout_s = timeout_ms / 1000\n \n",
+            "sides": {
+              "base": {
+                "text": "from urllib.request import Request, urlopen\n\n\nclass DispatchClient:\n    def __init__(self, endpoint: str, timeout_ms: int = 800):\n        self.endpoint = endpoint\n        self.timeout_s = timeout_ms / 1000\n\n    def send(self, payload: bytes):\n        request = Request(self.endpoint + \"/dispatch\", data=payload)\n        with urlopen(request, timeout=self.timeout_s) as response:\n            return response.status\n",
+                "sha256": "187c8ee16d1d29ec63cee9faf966ad9eea0fbdbc8d88e726d486d695d64e3d29",
+                "blob_sha": "043579653ee9ce4fd9dd5a2760cf2a689326853b"
+              },
+              "head": {
+                "text": "from urllib.request import Request, urlopen\n\n\nclass DispatchClient:\n    def __init__(self, endpoint: str, timeout_ms: int = 1200):\n        self.endpoint = endpoint\n        self.timeout_s = timeout_ms / 1000\n\n    def send(self, payload: bytes):\n        request = Request(self.endpoint + \"/dispatch\", data=payload)\n        with urlopen(request, timeout=self.timeout_s) as response:\n            return response.status\n",
+                "sha256": "53b1c5bbce2283deed2ab30221b01602a3fb353c05a4c7757e8a9f6f61517170",
+                "blob_sha": "34fc15c746d7ca4e1ef337532a7b837ff254a6ce"
+              }
+            }
+          },
+          {
+            "path": "services/dispatch/cli.py",
+            "base_path": "services/dispatch/cli.py",
+            "status": "modified",
+            "patch": "@@ -7,4 +7,4 @@\n def run(path: Path, payload: bytes):\n     with path.open(\"rb\") as stream:\n         config = tomllib.load(stream)\n-    return create_worker(config).send(payload)\n+    return create_worker(config[\"dispatch\"]).send(payload)\n",
+            "sides": {
+              "base": {
+                "text": "import tomllib\nfrom pathlib import Path\n\nfrom .worker import create_worker\n\n\ndef run(path: Path, payload: bytes):\n    with path.open(\"rb\") as stream:\n        config = tomllib.load(stream)\n    return create_worker(config).send(payload)\n",
+                "sha256": "297b4051d57b74f571f8ccb6358fa58f74cafc4260e5994151b75be87465f2ee",
+                "blob_sha": "466c4b991e370f112d298f82dc40023d6035a0ec"
+              },
+              "head": {
+                "text": "import tomllib\nfrom pathlib import Path\n\nfrom .worker import create_worker\n\n\ndef run(path: Path, payload: bytes):\n    with path.open(\"rb\") as stream:\n        config = tomllib.load(stream)\n    return create_worker(config[\"dispatch\"]).send(payload)\n",
+                "sha256": "6e120cfc88b79a50e71293fddef9556880979f5c8d30e73c0c74192781e6ad9a",
+                "blob_sha": "1a27cd1d52a0e9ffea66961e67d94b8c0fb537a4"
+              }
+            }
+          },
+          {
+            "path": "config/dispatch.dev.toml",
+            "base_path": "config/dispatch.dev.toml",
+            "status": "modified",
+            "patch": "@@ -1,4 +1,4 @@\n [dispatch]\n endpoint = \"http://localhost:8080\"\n-timeout_ms = 800\n+timeout_ms = 1200\n max_attempts = 1\n",
+            "sides": {
+              "base": {
+                "text": "[dispatch]\nendpoint = \"http://localhost:8080\"\ntimeout_ms = 800\nmax_attempts = 1\n",
+                "sha256": "be515592bc32145cce11b3642c19f93563ba1db033e6040b5314d9f1f287f504",
+                "blob_sha": "d4766ba275527baca18f81abde629f7260b93b56"
+              },
+              "head": {
+                "text": "[dispatch]\nendpoint = \"http://localhost:8080\"\ntimeout_ms = 1200\nmax_attempts = 1\n",
+                "sha256": "cbff35cfb913341cb3a9e09161451975364108975e417d1cbdc1f1959620792b",
+                "blob_sha": "70ba26fda534f8553d67fce08d7a366d7662ed24"
+              }
+            }
+          },
+          {
+            "path": "config/dispatch.staging.toml",
+            "base_path": "config/dispatch.staging.toml",
+            "status": "modified",
+            "patch": "@@ -1,4 +1,4 @@\n [dispatch]\n endpoint = \"https://dispatch.staging.invalid\"\n-timeout_ms = 900\n+timeout_ms = 1200\n max_attempts = 2\n",
+            "sides": {
+              "base": {
+                "text": "[dispatch]\nendpoint = \"https://dispatch.staging.invalid\"\ntimeout_ms = 900\nmax_attempts = 2\n",
+                "sha256": "8fc4781ce5ea4e0b817aeb1413c5f506a15f24c7353f9d0cbb031c8611bb79a3",
+                "blob_sha": "555fb693831f9664eca3ee06bd872c8ffa2b9e46"
+              },
+              "head": {
+                "text": "[dispatch]\nendpoint = \"https://dispatch.staging.invalid\"\ntimeout_ms = 1200\nmax_attempts = 2\n",
+                "sha256": "8a6f2d629da122ef07dcc6e00567d1580ad43e07906ff757d96186194d5cc554",
+                "blob_sha": "b55f7dbd2b19645747691fac5cf989019c80279a"
+              }
+            }
+          },
+          {
+            "path": "deploy/dispatch/values.yaml",
+            "base_path": "deploy/dispatch/values.yaml",
+            "status": "modified",
+            "patch": "@@ -1,5 +1,5 @@\n replicaCount: 2\n dispatch:\n   endpoint: http://dispatch:8080\n-  timeoutMs: 800\n+  timeoutMs: 1200\n   maxAttempts: 3\n",
+            "sides": {
+              "base": {
+                "text": "replicaCount: 2\ndispatch:\n  endpoint: http://dispatch:8080\n  timeoutMs: 800\n  maxAttempts: 3\n",
+                "sha256": "cc86710c821b29ad21104e5d4b96b39d7442691533cc681aa2633682d2474b4e",
+                "blob_sha": "43ad8204c816e967d2a5437762e44ea9df14cb3a"
+              },
+              "head": {
+                "text": "replicaCount: 2\ndispatch:\n  endpoint: http://dispatch:8080\n  timeoutMs: 1200\n  maxAttempts: 3\n",
+                "sha256": "0d7a89f781e31d2d9c7c8cd245a86894c5dff05a8cd4b9b188b1dee37b5525f5",
+                "blob_sha": "7b6b8ab4823fd73c45813758e67be15bbb13f79e"
+              }
+            }
+          },
+          {
+            "path": "deploy/dispatch/templates/configmap.yaml",
+            "base_path": "deploy/dispatch/templates/configmap.yaml",
+            "status": "modified",
+            "patch": "@@ -6,5 +6,5 @@\n   dispatch.toml: |\n     [dispatch]\n     endpoint = \"{{ .Values.dispatch.endpoint }}\"\n-    timeout_ms = 800\n+    timeout_ms = {{ .Values.dispatch.timeoutMs }}\n     max_attempts = {{ .Values.dispatch.maxAttempts }}\n",
+            "sides": {
+              "base": {
+                "text": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dispatch\ndata:\n  dispatch.toml: |\n    [dispatch]\n    endpoint = \"{{ .Values.dispatch.endpoint }}\"\n    timeout_ms = 800\n    max_attempts = {{ .Values.dispatch.maxAttempts }}\n",
+                "sha256": "66e5f0990d02116a2be2bf89c00b01b25fb625164141a6275c0366e4269e1641",
+                "blob_sha": "b361d2038497a4b42fbc9c69582594051f6486e9"
+              },
+              "head": {
+                "text": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dispatch\ndata:\n  dispatch.toml: |\n    [dispatch]\n    endpoint = \"{{ .Values.dispatch.endpoint }}\"\n    timeout_ms = {{ .Values.dispatch.timeoutMs }}\n    max_attempts = {{ .Values.dispatch.maxAttempts }}\n",
+                "sha256": "3b66c0d45976318a6e934b8031a0315ae3a54bcb4812451cb78ae5f4c3afc361",
+                "blob_sha": "8d4a23e1d95119774fad11edf95dbc04c1dd5a81"
+              }
+            }
+          },
+          {
+            "path": "tests/test_dispatch_transport.py",
+            "base_path": "tests/test_dispatch_transport.py",
+            "status": "modified",
+            "patch": "@@ -2,4 +2,4 @@\n \n \n def test_timeout_in_seconds():\n-    assert DispatchClient(\"http://dispatch:8080\").timeout_s == 0.8\n+    assert DispatchClient(\"http://dispatch:8080\").timeout_s == 1.2\n",
+            "sides": {
+              "base": {
+                "text": "from services.dispatch.transport import DispatchClient\n\n\ndef test_timeout_in_seconds():\n    assert DispatchClient(\"http://dispatch:8080\").timeout_s == 0.8\n",
+                "sha256": "c58342288330bf733517235ba34663b419658514da3bf5106858419b2a8ba0af",
+                "blob_sha": "5d175b154a889c68ffc18c974f24f616f7878726"
+              },
+              "head": {
+                "text": "from services.dispatch.transport import DispatchClient\n\n\ndef test_timeout_in_seconds():\n    assert DispatchClient(\"http://dispatch:8080\").timeout_s == 1.2\n",
+                "sha256": "4e355b2f5bb1fd333c78cfc814c3ac18ef28483bfd77a917528bf07aefd2d8bf",
+                "blob_sha": "be282b97fe2e7357fedb4bf7e45ab1d26c5598d9"
+              }
+            }
+          },
+          {
+            "path": "tests/test_dispatch_worker.py",
+            "base_path": "tests/test_dispatch_worker.py",
+            "status": "modified",
+            "patch": "@@ -3,4 +3,4 @@\n \n def test_worker_timeout():\n     worker = create_worker({\"endpoint\": \"http://dispatch:8080\", \"timeout_ms\": 1200})\n-    assert worker.timeout_s == 0.8\n+    assert worker.timeout_s == 1.2\n",
+            "sides": {
+              "base": {
+                "text": "from services.dispatch.worker import create_worker\n\n\ndef test_worker_timeout():\n    worker = create_worker({\"endpoint\": \"http://dispatch:8080\", \"timeout_ms\": 1200})\n    assert worker.timeout_s == 0.8\n",
+                "sha256": "569df0f58f3de7215817a162055e017462e56ec19d7e8321bd1d4ec91a435aae",
+                "blob_sha": "2eec68230e6051631fed0f6bb6ac597686c45bea"
+              },
+              "head": {
+                "text": "from services.dispatch.worker import create_worker\n\n\ndef test_worker_timeout():\n    worker = create_worker({\"endpoint\": \"http://dispatch:8080\", \"timeout_ms\": 1200})\n    assert worker.timeout_s == 1.2\n",
+                "sha256": "109ec37af4401a9eeb54dddc042ee00eb8c5874f01cd75662548aa1625ab832a",
+                "blob_sha": "fa29c1a027e27a6e40ae90c2ef062ba76275a646"
+              }
+            }
+          },
+          {
+            "path": "docs/release-notes.md",
+            "base_path": "docs/release-notes.md",
+            "status": "modified",
+            "patch": "@@ -1,4 +1,9 @@\n # 发布记录\n+\n+## 1.9.0\n+\n+- 统一三套环境的分发超时。\n+- 分发 CLI 改为读取 TOML 的 dispatch 段。\n \n ## 1.8.0\n \n",
+            "sides": {
+              "base": {
+                "text": "# 发布记录\n\n## 1.8.0\n\n- 增加分发任务的批量入口。\n",
+                "sha256": "9e73c6353b63d62a30f84658cf4655f7b1d0a8c0d9b45f211485bb4aa0b915bf",
+                "blob_sha": "295f32e67bbe72573b3221e5d92442d79decb1c0"
+              },
+              "head": {
+                "text": "# 发布记录\n\n## 1.9.0\n\n- 统一三套环境的分发超时。\n- 分发 CLI 改为读取 TOML 的 dispatch 段。\n\n## 1.8.0\n\n- 增加分发任务的批量入口。\n",
+                "sha256": "a8f2b618c2a4ed43cab4c8362b902e33ab44be6b2a809d6b7faa2645b189fe42",
+                "blob_sha": "9c5e0adc80f14b2ae2efe45099d2e5830c503390"
+              }
+            }
+          }
+        ]
+      },
+      "author": "许文舟",
+      "risk": "HIGH",
+      "status": "PENDING_HUMAN",
+      "risk_summary": "1 个高风险：缺少 endpoint 时，分发服务可能无法启动。",
+      "findings": [
+        {
+          "id": "dispatch-endpoint",
+          "risk": "HIGH",
+          "title": "缺少 endpoint 时启动失败",
+          "body": "读取 endpoint 时移除了默认值。配置缺少该键时，endpoint 为 None，下一行调用 rstrip() 会触发 AttributeError。",
+          "impact": "使用默认配置启动的分发进程会在建立连接前退出，无法接收任务。",
+          "conclusion": "默认配置未声明 endpoint，启动代码直接读取地址，现有测试只覆盖了显式配置地址。",
+          "suggested_action": "恢复默认地址，或在读取配置时明确校验，并补充缺省配置的启动测试。",
+          "verdict": "HYPOTHESIS_SUPPORTED",
+          "anchor": {
+            "path": "services/dispatch/settings.py",
+            "side": "head",
+            "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+            "start": 10,
+            "end": 12,
+            "availability": "AVAILABLE",
+            "title": "读取连接地址",
+            "summary": "默认值在本次改动中移除。",
+            "quote": [
+              "def resolve_endpoint(config: dict) -> str:",
+              "    endpoint = config.get(\"endpoint\")",
+              "    return endpoint.rstrip(\"/\")"
+            ]
+          },
+          "evidence": [
+            {
+              "path": "config/dispatch.toml",
+              "side": "head",
+              "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+              "start": 1,
+              "end": 3,
+              "availability": "AVAILABLE",
+              "title": "默认配置缺少地址",
+              "summary": "默认配置只声明超时和重试次数。",
+              "quote": [
+                "[dispatch]",
+                "timeout_ms = 1200",
+                "max_attempts = 3"
+              ]
+            },
+            {
+              "path": "services/dispatch/worker.py",
+              "side": "head",
+              "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+              "start": 5,
+              "end": 7,
+              "availability": "AVAILABLE",
+              "title": "启动时读取配置",
+              "summary": "创建分发进程时会调用 load_settings()。",
+              "quote": [
+                "def create_worker(config: dict) -> DispatchClient:",
+                "    settings = load_settings(config)",
+                "    return DispatchClient(settings.endpoint, timeout_ms=settings.timeout_ms)"
+              ]
+            },
+            {
+              "path": "tests/test_dispatch_settings.py",
+              "side": "head",
+              "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+              "start": 4,
+              "end": 8,
+              "availability": "AVAILABLE",
+              "title": "测试只覆盖显式地址",
+              "summary": "测试始终提供 endpoint。",
+              "quote": [
+                "def test_load_explicit_endpoint():",
+                "    config = {\"endpoint\": \"http://dispatch:8080/\", \"timeout_ms\": 1200}",
+                "    settings = load_settings(config)",
+                "    assert settings.endpoint == \"http://dispatch:8080\"",
+                "    assert settings.timeout_ms == 1200"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "dispatch-timeout-doc",
+          "risk": "MEDIUM",
+          "title": "文档中的超时与配置不一致",
+          "body": "部署文档写的是 1500ms，新的默认配置是 1200ms。",
+          "impact": "值班人员可能错判 1200–1500ms 的请求超时，并按错误阈值排查。",
+          "conclusion": "冻结版本中的运行配置和部署文档给出了两个不同的超时值。",
+          "suggested_action": "将部署文档改为 1200ms，或注明 1500ms 的适用环境。",
+          "verdict": "HYPOTHESIS_SUPPORTED",
+          "anchor": {
+            "path": "docs/dispatch-setup.md",
+            "side": "head",
+            "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+            "start": 3,
+            "end": 5,
+            "availability": "AVAILABLE",
+            "title": "部署说明",
+            "summary": "文档将单次超时写为 1500ms。",
+            "quote": [
+              "省略 endpoint 时使用默认地址 http://dispatch:8080。",
+              "单次请求超时为 1500ms。",
+              "最多重试 3 次。"
+            ]
+          },
+          "evidence": [
+            {
+              "path": "config/dispatch.toml",
+              "side": "head",
+              "revision": "ead4e854e630b4c99ee3ee445d43b86b51987df1",
+              "start": 1,
+              "end": 3,
+              "availability": "AVAILABLE",
+              "title": "默认配置为 1200ms",
+              "summary": "默认配置中的 timeout_ms 为 1200。",
+              "quote": [
+                "[dispatch]",
+                "timeout_ms = 1200",
+                "max_attempts = 3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "snapshot": {
+        "schema": "mea-snapshot-v1",
+        "id": "lantern-dispatch-251",
+        "pr": {
+          "title": "按错误类型拆分重试队列",
+          "body": "区分网络超时和等待限流恢复，分别交给快速与延迟队列。保留既有超时重试行为。",
+          "number": 251,
+          "repository": "lantern-lab/dispatch-service",
+          "url": "https://github.com/lantern-lab/dispatch-service/pull/251"
+        },
+        "revisions": {
+          "base": "4b4adbb2a311d8cb5027e8a079d8e3c35753055f",
+          "head": "421986f0271d9195a177d5ce3e385f43275c4cfa",
+          "target_base": "4b4adbb2a311d8cb5027e8a079d8e3c35753055f"
+        },
+        "provenance": {
+          "kind": "FROZEN_PENDING_REVIEW",
+          "captured_at": "2026-11-19T11:08:00+00:00",
+          "state_at_capture": "open",
+          "merged_at_capture": false,
+          "pending_review_version": true,
+          "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+          "capture_sha256": "b31224562e063450896717fa461cef7b2a2ce53bac5b49c452b6e06664f0403c"
+        },
+        "scope": {
+          "complete_listing": true,
+          "omitted_sources": [
+            {
+              "path": "services/dispatch/worker.py",
+              "side": "head",
+              "reason": "SOURCE_NOT_CAPTURED"
+            }
+          ],
+          "reported_changed_files": 3,
+          "capture": {
+            "status": "INCOMPLETE",
+            "context_selection": "PARTIAL",
+            "gap_counts": {
+              "MISSING": 1,
+              "TRUNCATED": 0,
+              "TRANSPORT": 0
+            },
+            "gaps": [
+              {
+                "kind": "MISSING",
+                "code": "SOURCE_NOT_CAPTURED",
+                "request": "blob",
+                "path": "services/dispatch/worker.py",
+                "side": "head"
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "services/dispatch/retry_policy.py",
+            "base_path": "services/dispatch/retry_policy.py",
+            "status": "modified",
+            "patch": "@@ -3,7 +3,7 @@\n \n def select_queue(error: Exception):\n     if isinstance(error, TimeoutError):\n-        return fast_queue\n+        return later_queue\n     if isinstance(error, ConnectionError):\n         return fast_queue\n     return later_queue\n",
+            "sides": {
+              "base": {
+                "text": "from .queues import fast_queue, later_queue\n\n\ndef select_queue(error: Exception):\n    if isinstance(error, TimeoutError):\n        return fast_queue\n    if isinstance(error, ConnectionError):\n        return fast_queue\n    return later_queue\n",
+                "sha256": "ea01276a6347900976c56d9512451b7179d9f38f4b2157956eb6559eea2f2047",
+                "blob_sha": "56fcec218e176dd4d2fa274028b78c34730fd064"
+              },
+              "head": {
+                "text": "from .queues import fast_queue, later_queue\n\n\ndef select_queue(error: Exception):\n    if isinstance(error, TimeoutError):\n        return later_queue\n    if isinstance(error, ConnectionError):\n        return fast_queue\n    return later_queue\n",
+                "sha256": "7d2fd69f0e00f707358b391de42a0a51672356b0971694c215fc2a4e89855f6e",
+                "blob_sha": "0cc8aaf8594f075cce052c8e46041c0391f31240"
+              }
+            }
+          },
+          {
+            "path": "tests/test_retry_policy.py",
+            "base_path": "tests/test_retry_policy.py",
+            "status": "modified",
+            "patch": "@@ -1,6 +1,6 @@\n from services.dispatch.retry_policy import select_queue\n-from services.dispatch.queues import fast_queue\n+from services.dispatch.queues import later_queue\n \n \n def test_timeout_queue():\n-    assert select_queue(TimeoutError()) is fast_queue\n+    assert select_queue(TimeoutError()) is later_queue\n",
+            "sides": {
+              "base": {
+                "text": "from services.dispatch.retry_policy import select_queue\nfrom services.dispatch.queues import fast_queue\n\n\ndef test_timeout_queue():\n    assert select_queue(TimeoutError()) is fast_queue\n",
+                "sha256": "d634a1d4952117f9134ece45e8a65cc0b098497c86337a7edde6c75a9cd84ed9",
+                "blob_sha": "19bcef77d7a7860bc1d98774dfe7a5d6f109dbc9"
+              },
+              "head": {
+                "text": "from services.dispatch.retry_policy import select_queue\nfrom services.dispatch.queues import later_queue\n\n\ndef test_timeout_queue():\n    assert select_queue(TimeoutError()) is later_queue\n",
+                "sha256": "48b7cd12286fb1ba385bb6d50f810383c99ea4ce4e9977315396cbc40cd81822",
+                "blob_sha": "a775cf7d7d5d8f8770ffc18bfb5b1f928dadd475"
+              }
+            }
+          },
+          {
+            "path": "docs/retries.md",
+            "base_path": "docs/retries.md",
+            "status": "modified",
+            "patch": "@@ -1,3 +1,3 @@\n # 重试队列\n \n-网络超时走快速队列。\n+限流恢复由延迟队列处理。\n",
+            "sides": {
+              "base": {
+                "text": "# 重试队列\n\n网络超时走快速队列。\n",
+                "sha256": "4c3c970a68485374581c430dde4900a718e3ebd6836cec6f70e7d4aedba7ac8b",
+                "blob_sha": "0e4f9078b90168fed89d494cc1c7f4b41cacce8d"
+              },
+              "head": {
+                "text": "# 重试队列\n\n限流恢复由延迟队列处理。\n",
+                "sha256": "47a4911db8f06763505f1e1140d62e1a0cbd29138cf0d471f748f89fea7bcb27",
+                "blob_sha": "435b3f24d619bdcf6cd9c68fc82a0d4e741c149b"
+              }
+            }
+          }
+        ]
+      },
+      "author": "周时雨",
+      "risk": "MEDIUM",
+      "status": "NEEDS_RECHECK",
+      "risk_summary": "1 个中风险待复查：超时任务进入延迟队列，调用侧证据缺失。",
+      "findings": [
+        {
+          "id": "dispatch-retry-queue",
+          "risk": "MEDIUM",
+          "title": "超时任务改走延迟队列",
+          "body": "TimeoutError 从快速队列改投延迟队列。调用端源码未采集，暂时无法核实是否存在其他快速重试路径。",
+          "impact": "若调用端调用此选择函数且没有其他快速重试路径，超时任务的恢复可能变慢。",
+          "conclusion": "已确认队列选择发生变化。调用端证据缺失，暂时无法判断实际恢复时间是否受影响。",
+          "suggested_action": "补采调用端源码，核对超时任务的入队路径和延迟设置。",
+          "verdict": "EVIDENCE_INSUFFICIENT",
+          "anchor": {
+            "path": "services/dispatch/retry_policy.py",
+            "side": "head",
+            "revision": "421986f0271d9195a177d5ce3e385f43275c4cfa",
+            "start": 4,
+            "end": 6,
+            "availability": "AVAILABLE",
+            "title": "超时队列选择",
+            "summary": "TimeoutError 现在返回 later_queue。",
+            "quote": [
+              "def select_queue(error: Exception):",
+              "    if isinstance(error, TimeoutError):",
+              "        return later_queue"
+            ]
+          },
+          "evidence": [
+            {
+              "path": "tests/test_retry_policy.py",
+              "side": "head",
+              "revision": "421986f0271d9195a177d5ce3e385f43275c4cfa",
+              "start": 4,
+              "end": 6,
+              "availability": "AVAILABLE",
+              "title": "测试预期随队列切换",
+              "summary": "测试期望超时进入延迟队列。",
+              "quote": [
+                "",
+                "def test_timeout_queue():",
+                "    assert select_queue(TimeoutError()) is later_queue"
+              ]
+            },
+            {
+              "path": "services/dispatch/worker.py",
+              "side": "head",
+              "revision": "421986f0271d9195a177d5ce3e385f43275c4cfa",
+              "start": null,
+              "end": null,
+              "availability": "MISSING",
+              "title": "缺少调用端源码",
+              "summary": "当前快照未采集调用端，补采后复查。",
+              "quote": null
+            }
+          ]
+        }
+      ],
+      "recheck_reason": "当前版本缺少调用侧源码，需补采后复查这个问题。"
+    },
+    {
+      "snapshot": {
+        "schema": "mea-snapshot-v1",
+        "id": "lantern-dispatch-246",
+        "pr": {
+          "title": "为批次报表增加游标分页",
+          "body": "改为按批次完成时间分页，减少运维页面首屏等待。调用方沿用现有 CSV 字段。",
+          "number": 246,
+          "repository": "lantern-lab/dispatch-service",
+          "url": "https://github.com/lantern-lab/dispatch-service/pull/246"
+        },
+        "revisions": {
+          "base": "ffcfe54cfd3294a32c0988a50f4d309b62271474",
+          "head": "d91cf449af2c81b02e01cdbdd5e92fa4aa420243",
+          "target_base": "ffcfe54cfd3294a32c0988a50f4d309b62271474"
+        },
+        "provenance": {
+          "kind": "FROZEN_PENDING_REVIEW",
+          "captured_at": "2026-11-19T08:20:00+00:00",
+          "state_at_capture": "open",
+          "merged_at_capture": false,
+          "pending_review_version": true,
+          "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+          "capture_sha256": "b1ac83b72e632adc3132a4e49ae28aacbdcebd358f0e63049eca42ec1ee7f831"
+        },
+        "scope": {
+          "complete_listing": true,
+          "omitted_sources": [],
+          "reported_changed_files": 2
+        },
+        "files": [
+          {
+            "path": "services/dispatch/report.py",
+            "base_path": "services/dispatch/report.py",
+            "status": "modified",
+            "patch": "@@ -1,5 +1,5 @@\n def next_page(rows, cursor=None, size=50):\n     ordered = sorted(rows, key=lambda row: row.finished_at)\n     if cursor is not None:\n-        ordered = [row for row in ordered if row.finished_at >= cursor]\n+        ordered = [row for row in ordered if row.finished_at > cursor]\n     return ordered[:size]\n",
+            "sides": {
+              "base": {
+                "text": "def next_page(rows, cursor=None, size=50):\n    ordered = sorted(rows, key=lambda row: row.finished_at)\n    if cursor is not None:\n        ordered = [row for row in ordered if row.finished_at >= cursor]\n    return ordered[:size]\n",
+                "sha256": "3b41247e54ec98ec1a25d1374919f5b6799d7bf6c4cff1baf00ba4d46b4d55d4",
+                "blob_sha": "dc8308f9e29a32b63560dafe1f52566a522a9c4c"
+              },
+              "head": {
+                "text": "def next_page(rows, cursor=None, size=50):\n    ordered = sorted(rows, key=lambda row: row.finished_at)\n    if cursor is not None:\n        ordered = [row for row in ordered if row.finished_at > cursor]\n    return ordered[:size]\n",
+                "sha256": "a2130603492aace6d9601e4bd41cf38df6256761e9da4c6cb4d2e470b4a6e330",
+                "blob_sha": "edbbd08764cdd06070f90b6af811219791fb1212"
+              }
+            }
+          },
+          {
+            "path": "tests/test_report.py",
+            "base_path": "tests/test_report.py",
+            "status": "added",
+            "patch": "@@ -0,0 +1,9 @@\n+from collections import namedtuple\n+\n+from services.dispatch.report import next_page\n+\n+\n+def test_distinct_timestamps():\n+    Row = namedtuple(\"Row\", \"finished_at batch_id\")\n+    rows = [Row(100, 1), Row(200, 2)]\n+    assert next_page(rows, cursor=100) == [rows[1]]\n",
+            "sides": {
+              "head": {
+                "text": "from collections import namedtuple\n\nfrom services.dispatch.report import next_page\n\n\ndef test_distinct_timestamps():\n    Row = namedtuple(\"Row\", \"finished_at batch_id\")\n    rows = [Row(100, 1), Row(200, 2)]\n    assert next_page(rows, cursor=100) == [rows[1]]\n",
+                "sha256": "4a56769e15374ab421b64091eb4abc34a336b3e23c63c0cc3ee4a7f2d8f8a01e",
+                "blob_sha": "77d190c6768230eb51dbcb1b330421fc7b44253a"
+              }
+            }
+          }
+        ]
+      },
+      "author": "高见川",
+      "risk": "MEDIUM",
+      "status": "PENDING_HUMAN",
+      "risk_summary": "1 个中风险：同一时间完成的批次可能在翻页时漏掉。",
+      "findings": [
+        {
+          "id": "dispatch-report-cursor",
+          "risk": "MEDIUM",
+          "title": "游标翻页跳过同时间的批次",
+          "body": "游标只保存 finished_at，下一页又要求时间严格大于游标。若同时间的批次跨页，后半部分会被跳过。",
+          "impact": "批次列表和导出结果可能少记录。",
+          "conclusion": "当前测试使用不同的完成时间，共享时间戳的翻页边界尚无覆盖。",
+          "suggested_action": "以 (finished_at, batch_id) 作为稳定游标，并补充同时间跨页测试。",
+          "verdict": "HYPOTHESIS_SUPPORTED",
+          "anchor": {
+            "path": "services/dispatch/report.py",
+            "side": "head",
+            "revision": "d91cf449af2c81b02e01cdbdd5e92fa4aa420243",
+            "start": 1,
+            "end": 5,
+            "availability": "AVAILABLE",
+            "title": "游标过滤条件",
+            "summary": "翻页按照完成时间严格过滤。",
+            "quote": [
+              "def next_page(rows, cursor=None, size=50):",
+              "    ordered = sorted(rows, key=lambda row: row.finished_at)",
+              "    if cursor is not None:",
+              "        ordered = [row for row in ordered if row.finished_at > cursor]",
+              "    return ordered[:size]"
+            ]
+          },
+          "evidence": [
+            {
+              "path": "tests/test_report.py",
+              "side": "head",
+              "revision": "d91cf449af2c81b02e01cdbdd5e92fa4aa420243",
+              "start": 6,
+              "end": 9,
+              "availability": "AVAILABLE",
+              "title": "测试的时间戳各不相同",
+              "summary": "测试样例使用 100 和 200 两个不同时间。",
+              "quote": [
+                "def test_distinct_timestamps():",
+                "    Row = namedtuple(\"Row\", \"finished_at batch_id\")",
+                "    rows = [Row(100, 1), Row(200, 2)]",
+                "    assert next_page(rows, cursor=100) == [rows[1]]"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "snapshot": {
+        "schema": "mea-snapshot-v1",
+        "id": "lantern-dispatch-242",
+        "pr": {
+          "title": "补充分发值班手册",
+          "body": "补充告警排查路径、队列观察方法和交班清单，便于新同事接手晚间值班。",
+          "number": 242,
+          "repository": "lantern-lab/dispatch-service",
+          "url": "https://github.com/lantern-lab/dispatch-service/pull/242"
+        },
+        "revisions": {
+          "base": "9dda9d9d872fec245ca5598d306bd32a3a4afc92",
+          "head": "38ab50e85782e21f16b1db00918bd45452818450",
+          "target_base": "9dda9d9d872fec245ca5598d306bd32a3a4afc92"
+        },
+        "provenance": {
+          "kind": "FROZEN_PENDING_REVIEW",
+          "captured_at": "2026-11-18T16:30:00+00:00",
+          "state_at_capture": "open",
+          "merged_at_capture": false,
+          "pending_review_version": true,
+          "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+          "capture_sha256": "a031bf5ebaab3a2414b8fa734c1bf94b83909af95fa2747495c52515cf75adeb"
+        },
+        "scope": {
+          "complete_listing": true,
+          "omitted_sources": [],
+          "reported_changed_files": 2
+        },
+        "files": [
+          {
+            "path": "docs/operator-faq.md",
+            "base_path": "docs/operator-faq.md",
+            "status": "modified",
+            "patch": "@@ -2,3 +2,4 @@\n \n 1. 确认任务是否入队。\n 2. 核对任务处理历史。\n+3. 参见 [队列排查](queue-diagnostics.md)。\n",
+            "sides": {
+              "base": {
+                "text": "# 分发值班常见问题\n\n1. 确认任务是否入队。\n2. 核对任务处理历史。\n",
+                "sha256": "c696eb126afeb56844686c671c5a39c94ee19c4754d8668cae5856b94d656d99",
+                "blob_sha": "370a758d4f9c7b8f39e26202c2f5eb07ba760014"
+              },
+              "head": {
+                "text": "# 分发值班常见问题\n\n1. 确认任务是否入队。\n2. 核对任务处理历史。\n3. 参见 [队列排查](queue-diagnostics.md)。\n",
+                "sha256": "b97bfd2dc51ba828462157bfa070c07c27b8d4e7468d66589dff33ac76c348a2",
+                "blob_sha": "eaf8489b4ff8c1725fc0c7c21975c920f962eddb"
+              }
+            }
+          },
+          {
+            "path": "docs/queue-triage.md",
+            "base_path": "docs/queue-triage.md",
+            "status": "added",
+            "patch": "@@ -0,0 +1,4 @@\n+# 队列排查\n+\n+1. 查看最近 15 分钟的积压趋势。\n+2. 按队列名称核对待处理任务和最老任务的入队时间。\n",
+            "sides": {
+              "head": {
+                "text": "# 队列排查\n\n1. 查看最近 15 分钟的积压趋势。\n2. 按队列名称核对待处理任务和最老任务的入队时间。\n",
+                "sha256": "05c754ec3041ca254960a1540e37c1720b1e4181144722126fac9ce38809fcd1",
+                "blob_sha": "db3bbfd57286314a15e9f71d369477b942d22207"
+              }
+            }
+          }
+        ]
+      },
+      "author": "林若安",
+      "risk": "LOW",
+      "status": "REVIEWED",
+      "risk_summary": "1 个低风险：值班手册中的队列排查链接指向旧文件名。",
+      "findings": [
+        {
+          "id": "dispatch-faq-link",
+          "risk": "LOW",
+          "title": "队列排查链接指向旧文件名",
+          "body": "手册链接指向 queue-diagnostics.md，本次新增的文件名是 queue-triage.md。",
+          "impact": "值班人员从手册进入队列排查说明时可能打开空页面。",
+          "conclusion": "已核对冻结版本中的链接和新增文件名，人工记录已确认此发现。",
+          "suggested_action": "将链接改为 queue-triage.md。",
+          "verdict": "HYPOTHESIS_SUPPORTED",
+          "anchor": {
+            "path": "docs/operator-faq.md",
+            "side": "head",
+            "revision": "38ab50e85782e21f16b1db00918bd45452818450",
+            "start": 3,
+            "end": 5,
+            "availability": "AVAILABLE",
+            "title": "值班手册中的链接",
+            "summary": "链接目标与新增文件名不一致。",
+            "quote": [
+              "1. 确认任务是否入队。",
+              "2. 核对任务处理历史。",
+              "3. 参见 [队列排查](queue-diagnostics.md)。"
+            ]
+          },
+          "evidence": [
+            {
+              "path": "docs/queue-triage.md",
+              "side": "head",
+              "revision": "38ab50e85782e21f16b1db00918bd45452818450",
+              "start": 1,
+              "end": 4,
+              "availability": "AVAILABLE",
+              "title": "新增的队列排查文档",
+              "summary": "同目录新增文档名为 queue-triage.md。",
+              "quote": [
+                "# 队列排查",
+                "",
+                "1. 查看最近 15 分钟的积压趋势。",
+                "2. 按队列名称核对待处理任务和最老任务的入队时间。"
+              ]
+            }
+          ]
+        }
+      ],
+      "review": {
+        "dispatch-faq-link": "ACCEPTED"
+      }
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import {patches, sourceLines} from './frozen-code.js';
 import {copy, diagnostic, m, mountLanguage, option, setAttr, setText, setTitle} from './i18n.js';
 
 const $ = id => document.getElementById(id);
@@ -37,6 +38,7 @@ const humanTask = () => {
   return id ? state.human?.tasks.find(t => t.id === id) : state.human?.tasks[0];
 };
 const candidateSources = {
+  AUTHORED_OFFLINE_DEMO: m('Authored demo findings'),
   REAL_PROVIDER_DEEPSEEK: m('Real model (DeepSeek)'),
   MOCK_REVIEW_DEMO_NOT_AI: m('Deterministic Mock'),
   MOCK_PROVIDER_NOT_AI: m('Mock provider'),
@@ -577,28 +579,6 @@ function renderOverview() {
   overviewScope(wrap, t);
 }
 
-function sourceLines(text) {
-  if (!text) return [];
-  // Match the Python snapshot reader's splitlines() numbering.
-  const lines = text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/);
-  if (lines.at(-1) === '') lines.pop();
-  return lines;
-}
-function patches(patch) {
-  const hunks = [];
-  let h, base = 0, head = 0;
-  for (const text of sourceLines(patch)) {
-    const m = text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (m) {
-      base = +m[1]; head = +m[2];
-      h = {base, head, text, rows: []}; hunks.push(h);
-    } else if (h && text.startsWith(' ')) h.rows.push({base: base++, head: head++, text: text.slice(1)});
-    else if (h && text.startsWith('+')) h.rows.push({head: head++, text: text.slice(1), kind: 'add'});
-    else if (h && text.startsWith('-')) h.rows.push({base: base++, text: text.slice(1), kind: 'del'});
-    else if (h && text.startsWith('\\')) h.rows.push({text});
-  }
-  return hunks;
-}
 function changeCounts(file) {
   const rows = patches(file.patch).flatMap(h => h.rows);
   return {added: rows.filter(r => r.kind === 'add').length, removed: rows.filter(r => r.kind === 'del').length};
@@ -1769,5 +1749,15 @@ document.addEventListener('keydown',e => {
   }
 });
 mountLanguage();
+const riskRecord = url.searchParams.get('risk-record');
+if (/^(review|task)-[0-9a-f]{64}$/.test(riskRecord)) {
+  const back = new URLSearchParams({record: riskRecord});
+  for (const key of ['revision', 'finding']) {
+    const value = url.searchParams.get('risk-' + key);
+    if (value) back.set(key, value);
+  }
+  $('inbox-link').href = '/?' + back;
+  setText($('inbox-link'), m('Back to risk review'));
+}
 narrow.addEventListener('change',render);
 init().catch(e => {state.loading=false; render(); notify(m('Unable to load the workspace. {error}', {error: diagnostic(e.message)}),true);});

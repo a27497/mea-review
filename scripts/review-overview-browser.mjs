@@ -113,6 +113,9 @@ try {
 
   const english = await newPage('fr-FR', {width: 1440, height: 900});
   await english.goto(origin);
+  await expect(english.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await language(english).press('Space');
+  await english.goto(origin + '/workbench');
   await expect(english.getByRole('heading', {name: 'PR Inbox'})).toBeVisible();
   await expect(english.locator('html')).toHaveAttribute('lang', 'en');
   await language(english).focus();
@@ -138,13 +141,13 @@ try {
   await english.getByRole('link', {name: 'Review v3 workspace'}).click();
   await expect(english.locator('html')).toHaveAttribute('lang', 'en');
   await english.context().close();
-  flows.push('A non-Zh browser defaults to English. A keyboard override persists on reload and in both directions across Classic and Review v3. Classic keeps an unsaved objective and the exact selected source.');
+  flows.push('The inbox defaults to Chinese in a non-Zh browser. A keyboard override persists on reload and in both directions across Classic and Review v3. Classic keeps an unsaved objective and the exact selected source.');
 
   let mobile;
   for (const [name, width, height] of [['desktop', 1440, 900], ['tablet', 768, 1024], ['phone', 390, 844]]) {
     const p = await newPage('zh-TW', {width, height});
     if (name === 'phone') mobile = p;
-    await p.goto(origin);
+    await p.goto(origin + '/workbench');
     await expect(p.locator('html')).toHaveAttribute('lang', 'zh-CN');
     await expect(p.getByRole('heading', {name: 'PR 收件箱'})).toBeVisible();
     const search = p.getByRole('searchbox', {name: '搜索', exact: true});

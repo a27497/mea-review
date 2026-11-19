@@ -66,6 +66,7 @@ try {
       await route.abort();
     }
   });
+  await context.addInitScript(() => { if (!localStorage.getItem('mea.language')) localStorage.setItem('mea.language', 'en'); });
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   const $ = id => page.locator('#' + id);

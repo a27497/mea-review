@@ -1,5 +1,6 @@
 import {chromium, expect} from '@playwright/test';
 import {spawn, execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
@@ -462,29 +463,111 @@ try {
 
   const boundaryTitle = 'Repository documentation, review workflow migration, scope verification, and workspace accessibility updates. '
     .repeat(5).slice(0,500).trim();
+  const boundaryPath = 'src/phase_four_product_workbench/verification/synthetic_provider_adapter/' +
+    'frozen_snapshot_collection/historical_source_context/workspace_module_10/' +
+    'local_persistence_operation_with_review_evidence_lineage.py';
+  const signature = 'def ratio_9():';
+  const notes = 'offline-review-provenance-'.repeat(24);
+  const oldLine = '    return 1  # ' + notes + ' previous';
+  const newLine = '    return 2  # ' + notes + ' current';
+  const source = line => {
+    const text = signature + '\n' + line + '\n';
+    return {
+      text,
+      sha256: createHash('sha256').update(text).digest('hex'),
+      blob_sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0${text}`).digest('hex'),
+    };
+  };
   assert.equal(Buffer.byteLength(boundaryTitle),500);
+  assert.equal(boundaryPath.length,205);
   snapshot.pr.title = boundaryTitle;
+  snapshot.scope.reported_changed_files++;
+  snapshot.files.push({
+    path: boundaryPath, base_path: boundaryPath, status:'modified',
+    patch: `@@ -1,2 +1,2 @@\n ${signature}\n-${oldLine}\n+${newLine}\n`,
+    sides: {base:source(oldLine), head:source(newLine)},
+  });
   const titleTask = await m.request.post(base + '/api/tasks', {data:{snapshot, budget:{tools:1}}});
   assert.equal(titleTask.status(),200);
   const titleTaskId = (await titleTask.json()).id;
   await expect.poll(async () => (await data(m,'/api/task/' + titleTaskId)).status).toBe('STOPPED');
+  const titleQuery = new URLSearchParams({task:titleTaskId, file:boundaryPath, side:'head', line:'1', back:'files'});
+  const boundaryLayout = [];
   for (const [width,height] of [[390,844],[720,450]]) {
     await m.setViewportSize({width,height});
-    await m.goto(base + '/?task=' + titleTaskId);
+    await m.goto(base + '/?' + titleQuery);
     await expect(m.locator('#intro h1')).toHaveText(boundaryTitle);
-    await expect.poll(() => m.locator('#code').evaluate(node => node.clientHeight)).toBeGreaterThanOrEqual(120);
-    const firstLine = m.locator('#code .code-line code').first();
-    await firstLine.scrollIntoViewIfNeeded();
-    await expect(firstLine).toBeInViewport();
+    const pane = m.locator('#code');
+    const header = pane.locator('.code-head');
+    const diff = pane.getByRole('region',{name:'Unified diff · ' + boundaryPath,exact:true});
+    const back = btn(header,'Back to files');
+    await expect(header.locator('.code-path span')).toHaveText(boundaryPath);
+    await expect(header.locator('.controls > span[title]')).toHaveCount(2);
+    await expect(header.locator('.controls > span[title]').first()).toHaveAttribute('title',snapshot.revisions.base);
+    await expect(header.locator('.controls > span[title]').last()).toHaveAttribute('title',snapshot.revisions.head);
+    await expect(header).toContainText('HEAD · L1');
+    await expect(located(m).locator('code')).toHaveText(signature);
+    await expect(diff).toHaveAttribute('tabindex','0');
+    await m.evaluate(() => document.fonts.ready);
+    await expect.poll(() => pane.evaluate(node => node.clientHeight)).toBeGreaterThanOrEqual(120);
+    const measure = () => located(m).locator('code').evaluate(node => {
+      // The code element can span the full long diff line. Measure the text itself.
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const bounds = range.getBoundingClientRect();
+      const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+      const pane = node.closest('#code');
+      return {
+        scrollTop:pane.scrollTop, maxScrollTop:pane.scrollHeight - pane.clientHeight,
+        paneHeight:pane.clientHeight,
+        headerHeight:pane.querySelector('.code-head').getBoundingClientRect().height,
+        codeHit:!!hit && node.contains(hit), hit:hit?.closest('.code-head')?.className || hit?.tagName || null,
+      };
+    });
+    await pane.scrollIntoViewIfNeeded();
+    await pane.focus();
+    await m.keyboard.press('Home');
+    await expect.poll(async () => (await measure()).scrollTop).toBe(0);
+    const wheelBefore = await measure();
+    await pane.hover();
+    await m.mouse.wheel(0,600);
+    await expect.poll(measure, {message:'The wheel must expose the code text center'}).toMatchObject({codeHit:true});
+    const wheelAfter = await measure();
+    assert(wheelAfter.scrollTop > wheelBefore.scrollTop, 'Wheel should scroll the Diff pane');
+    await shot(m,'long-title-wheel-' + width);
+
+    await pane.focus();
+    await m.keyboard.press('Tab');
+    await expect(back).toBeFocused();
+    await m.keyboard.press('Tab');
+    await expect(diff).toBeFocused();
+    await m.keyboard.press('Home');
+    await expect.poll(async () => (await measure()).scrollTop).toBe(0);
+    const keyboardBefore = await measure();
+    await m.keyboard.press('End');
+    await expect.poll(async () => {
+      const {scrollTop,maxScrollTop} = await measure();
+      return Math.abs(maxScrollTop - scrollTop);
+    }).toBeLessThanOrEqual(1);
+    const keyboardAfter = await measure();
+    assert(keyboardAfter.scrollTop > keyboardBefore.scrollTop, 'End should scroll the focused Diff pane');
+    assert(keyboardAfter.codeHit, 'End should expose the code text center');
+    await expect(diff).toBeFocused();
     await shot(m,'long-title-' + width);
-    await panel(m,'Files');
+    await m.keyboard.press('Shift+Tab');
+    await expect(back).toBeFocused();
+    await m.keyboard.press('Enter');
+    await expect(m.getByRole('button',{name:boundaryPath,exact:true})).toBeFocused();
     const filter = m.getByRole('searchbox',{name:'Filter files'});
     await filter.scrollIntoViewIfNeeded();
     await expect(filter).toBeInViewport();
     await panel(m,'Review');
     await expect(rail(m).locator('.outcome-code')).toHaveText('TOOL_BUDGET');
+    boundaryLayout.push({width,height,wheelBefore,wheelAfter,keyboardBefore,keyboardAfter});
   }
-  flows.push('A 500-byte PR title stays readable, and the Diff, Files and Review panels remain usable at 390×844 and 720×450.');
+  await d.goto(base + '/?' + titleQuery);
+  await expect(d.locator('#code .code-head')).toHaveCSS('position','sticky');
+  flows.push('With a 500-byte PR title and a 205-character path, wheel and keyboard scrolling expose the code text center. Diff focus and Back to files work at 390×844 and 720×450.');
 
   const audit=JSON.parse(py(`
 import json,sqlite3,sys
@@ -513,7 +596,7 @@ print(json.dumps(dict(attempts=mock['post_attempts'],comments=len(mock['comments
   flows.push('The desktop header and candidate card distinguish saved Real and deterministic Mock sources from Mock writeback.');
   assert.deepEqual(errors,[]);assert.deepEqual(consoleErrors,[]);assert.deepEqual(external,[]);
   await writeFile(path.join(out,'verification.json'),JSON.stringify({status:'PASS',flows,screenshots,
-    errors,consoleErrors,external,writes,audit,real_model_requests:0,real_github_writes:0,exit_code:0},null,2)+'\n');
+    errors,consoleErrors,external,writes,audit,boundaryLayout,real_model_requests:0,real_github_writes:0,exit_code:0},null,2)+'\n');
   console.log('PASS: desktop and mobile source navigation, candidate provenance, confirmation, Mock reconciliation, five comparison outcomes and persistence.');
 } catch(error) {
   for(const [i,c] of contexts.entries()) await c.pages()[0]?.screenshot({path:path.join(out,'failure-'+i+'.png')}).catch(()=>{});

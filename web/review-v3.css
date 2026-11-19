@@ -232,12 +232,12 @@ dialog::backdrop{background:#23232b55}
   .workspace[data-panel=files] #files,.workspace[data-panel=code] #code,.workspace[data-panel=review] #review{display:block}
   .files,.review{padding:14px 16px 20px}
   .tree-row,.pair-row,.file-search,.rail-card,.review .button{min-height:44px}
-  .code-head{min-height:44px;flex-wrap:wrap}
+  .code-head{min-height:44px;flex-wrap:wrap;position:static}
   .code-head .button{min-height:44px}
   .hunk-switch{display:block;padding:4px 10px}
   .hunk-switch .button{min-height:44px}
   .diff{font-size:12px}
-  .code-line{min-height:25px;grid-template-columns:31px 29px 15px minmax(0,1fr);padding-right:8px}
+  .code-line{min-height:25px;grid-template-columns:31px 29px 15px minmax(0,1fr);padding-right:8px;scroll-margin-top:0}
   .code-line>code{padding-left:7px}
   .hunk{font-size:10px}
   .hunk-context{display:none}

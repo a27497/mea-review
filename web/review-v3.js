@@ -29,7 +29,10 @@ const terminal = new Set(['COMPLETED', 'STOPPED', 'CANCELLED']);
 const owns = review => review?.mode === 'MOCK_OWNED_REVIEW';
 const liveReview = review => review?.mode === 'LIVE_GITHUB_REVIEW';
 const liveSend = send => send?.mode === 'LIVE_GITHUB';
-const humanTask = () => state.human?.tasks.find(t => t.id === current().taskId) || state.human?.tasks[0];
+const humanTask = () => {
+  const id = current().taskId;
+  return id ? state.human?.tasks.find(t => t.id === id) : state.human?.tasks[0];
+};
 const candidateSources = {
   REAL_PROVIDER_DEEPSEEK: 'Real model (DeepSeek)',
   MOCK_REVIEW_DEMO_NOT_AI: 'Deterministic Mock',
@@ -50,6 +53,14 @@ const activeTask = () => state.mode === 'completed' ? state.task : state.mode ==
 const candidate = () => humanTask()?.candidates.find(c => c.id === current().candidateId) || humanTask()?.candidates[0];
 const currentDraft = () => state.human?.drafts.find(d => d.task_id === humanTask()?.id && d.candidate_id === candidate()?.id);
 const activePr = () => activeTask()?.pr || (state.mode === 'compare' ? state.compareReview?.pr : null);
+const investigationStatuses = new Map([
+  ['QUEUED', 'Queued'], ['RUNNING', 'Running'], ['COMPLETED', 'Completed'],
+  ['STOPPED', 'Stopped'], ['CANCELLED', 'Cancelled'],
+]);
+const investigationStatus = status => {
+  const label = investigationStatuses.get(status);
+  return label ? 'Investigation ' + label.toLowerCase() : 'Investigation status unknown';
+};
 const statusTone = status => status === 'STOPPED' ? 'danger'
   : ['QUEUED', 'RUNNING', 'COMPLETED'].includes(status) ? 'accent' : 'warn';
 const inboxGroups = {tasks: 'Saved investigations', reviews: 'Saved human reviews'};
@@ -231,7 +242,7 @@ function render() {
   if (t) {
     const frozenHead = tag('Frozen HEAD ' + short(t.view.revisions.head), 'accent');
     frozenHead.title = t.view.revisions.head;
-    meta.append(frozenHead, tag(t.status || 'Unknown status', statusTone(t.status)));
+    meta.append(frozenHead, tag(investigationStatus(t.status), statusTone(t.status)));
     if (!t.view.coverage.complete_listing || (t.view.coverage.capture && t.view.coverage.capture.status !== 'COMPLETE')) {
       meta.append(tag('Partial capture', 'warn'));
     }
@@ -445,7 +456,24 @@ function returnFromCode(panel) {
   const target = c.returnOrigin?.isConnected ? c.returnOrigin : (c.returnFocus && $(c.returnFocus)) || active || ui[panel];
   (ui[panel].contains(target) ? target : ui[panel]).focus();
 }
+const codeOverflow = new ResizeObserver(entries => {
+  for (const {target} of entries) {
+    const region = target.closest('.diff');
+    if (region.clientWidth && region.scrollWidth > region.clientWidth) region.tabIndex = 0;
+    else region.removeAttribute('tabindex');
+  }
+});
+function appendCodeListing(parent, listing, title) {
+  const region = el('div', '', 'diff');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', title);
+  region.append(listing);
+  parent.append(region);
+  codeOverflow.observe(region);
+  codeOverflow.observe(listing);
+}
 function renderCode() {
+  codeOverflow.disconnect();
   const n = ui.code; n.replaceChildren();
   if (state.mode === 'compare') return compareCode(n);
   const t = activeTask();
@@ -453,7 +481,8 @@ function renderCode() {
     const box = el('div', '', 'empty');
     box.append(el('h2', state.loading ? 'Loading workspace…' : state.mode === 'human' ? 'Open a human review' : 'No saved review selected'));
     if (!state.loading) {
-      box.append(el('p', 'Reopen a saved record from the PR Inbox.', 'muted'), link('PR Inbox', '/', 'button'));
+      box.append(el('p', current().evidenceAlert || 'Reopen a saved record from the PR Inbox.', 'muted'),
+        link('PR Inbox', '/', 'button'));
       box.append(' ', link('Import & task controls', '/classic', 'button'));
     }
     n.append(box); return;
@@ -489,12 +518,12 @@ function renderCode() {
   if (c.returnToFiles) tools.append(button('Back to files', () => returnFromCode('files')));
   h.append(tools); n.append(h);
   if (c.evidenceAlert) n.append(el('p', c.evidenceAlert, 'evidence-alert'));
-  const diff = el('div', '', 'diff');
+  const listing = el('div');
   if (s) {
     const lines = frozenLines(f,s);
-    diff.append(el('div', 'Frozen ' + sides[s] + ' · ' + short(t.view.revisions[s]), 'hunk'));
-    for (const [i, text] of lines.entries()) diff.append(codeRow({[s]:i+1, text}, loc));
-    if (!lines.length) diff.append(el('p', 'No text is available for this side.', 'empty'));
+    listing.append(el('div', 'Frozen ' + sides[s] + ' · ' + short(t.view.revisions[s]), 'hunk'));
+    for (const [i, text] of lines.entries()) listing.append(codeRow({[s]:i+1, text}, loc));
+    if (!lines.length) listing.append(el('p', 'No text is available for this side.', 'empty'));
   } else {
     const hunks = patches(f.patch);
     const picked = c.hunk ?? Math.max(0,hunks.findIndex(h => loc && h.rows.some(r => r[loc.side] === loc.line)));
@@ -515,11 +544,11 @@ function renderCode() {
       title.append(hunk.text.slice(0,split),el('span',hunk.text.slice(split),'hunk-context'));
       group.append(title);
       for (const row of hunk.rows) group.append(codeRow(row, loc));
-      diff.append(group);
+      listing.append(group);
     }
-    if (!hunks.length) diff.append(el('p', 'No unified diff was collected for this file.', 'empty'));
+    if (!hunks.length) listing.append(el('p', 'No unified diff was collected for this file.', 'empty'));
   }
-  n.append(diff);
+  appendCodeListing(n, listing, (s ? 'Frozen ' + sides[s] + ' source' : 'Unified diff') + ' · ' + path);
   const a = candidateAnchor(t);
   if (!s && a && (a.side === 'base' ? f.base_path : f.path) === a.path) {
     const note = el('div', '', 'candidate-note');
@@ -642,7 +671,7 @@ function renderCompleted(n, t) {
     ...(t.status !== 'COMPLETED' ? [] : [
     action('Open human review', async () => {
       state.human = await human('create',{task_id:t.id});
-      context.human = {}; setCase('human');
+      context.human = {taskId:t.id}; resetPreview(); setCase('human');
       if (narrow.matches) setPanel('review', true);
     })]));
   block(n,'',lazy('Snapshot details & exports', () => [
@@ -669,6 +698,8 @@ function selectHumanVersion(id) {
     returnToReview:false, returnToFiles:false, returnOrigin:null, returnFocus:null, fileSearch:'', hunk:null,
   });
   resetPreview(); render();
+  for (const pane of Object.values(ui)) pane.scrollTop = 0;
+  ui.review.focus({preventScroll: true});
 }
 function readStatus(d) {
   return d.status === 'CONFIRMED_MOCK_ONLY' ? 'CONFIRMED' : d.status === 'CONFIRMED_LIVE' ? 'CONFIRMED · LIVE' : d.status || 'UNKNOWN';
@@ -829,6 +860,10 @@ function renderEditor(n,t,c,d) {
 function renderHuman(n,t) {
   n.append(el('h2',t?.candidates.length ? 'Finding' : 'Human review','rail-heading'));
   if (!t) {
+    if (state.human && current().taskId) {
+      n.append(el('p',current().evidenceAlert,'rail-sub'), ...humanVersionButtons());
+      return;
+    }
     n.append(el('p','Open a saved workspace or the self-owned offline fixture.','rail-sub'),
       action('Open owned Mock fixture', async () => { await ensureOwned(); render(); },'open-owned'));
     return;
@@ -874,14 +909,14 @@ function renderHuman(n,t) {
         await refreshHuman(); renderRail(true); locate(t,c.change,true,origin);
       }), 'select-candidate'));
     } else if (d && (!blocked || d.intent_id)) renderEditor(n,t,c,d);
-  } else n.append(el('p','This frozen version has no supported candidate. ' + (t.reason || t.status || 'Investigation status unknown'), 'rail-sub'));
+  } else n.append(el('p',['This frozen version has no supported candidate.', t.reason].filter(Boolean).join(' '), 'rail-sub'));
   renderRereview(n,t);
   const live = block(n,'',el('p',liveReview(state.human) ? 'Live GitHub writes run only in the attended command-line lane for allowlisted repositories.' : 'Live GitHub publishing is disabled.','rail-sub'));
   if (currentDraft()) {
     const disabled = button('Publish to GitHub',() => {}); disabled.disabled = true; live.append(disabled);
   }
   live.append(lazy('Workspace history & exports', () => [
-    ...state.human.tasks.map(row => button('Open ' + label(row), () => selectHumanVersion(row.id),'button saved-row')),
+    ...humanVersionButtons(),
     ...(mock ? [detail('Mock target controls',el('p','Select this frozen head for the local Mock transport only. Permissions and fault settings stay as configured.'),
       action('Set Mock target to ' + label(t),async () => {
         await human('mock-state',{version:label(t),can_comment:null,fault:null,complete_listing:null});
@@ -890,6 +925,10 @@ function renderHuman(n,t) {
       }))] : []),
     detail('Review events',pre(state.human.events)),exportsFor(null,state.human)
   ]));
+}
+function humanVersionButtons() {
+  return state.human.tasks.map(task =>
+    button('Open ' + label(task), () => selectHumanVersion(task.id), 'button saved-row'));
 }
 function otherComments(parent, rows, acknowledged) {
   if (!rows?.length) return;
@@ -1037,9 +1076,10 @@ function sourceCard(t,anchor,side) {
   }
   const first = Math.max(1,(anchor.fn?.start ?? anchor.line) - 2);
   const last = Math.min(lines.length, Math.max(anchor.line,anchor.fn?.end || 0));
-  const listing = el('div','','diff');
+  const listing = el('div');
   for (let i = first; i <= last; i++) listing.append(codeRow({[anchor.side]:i,text:lines[i-1]},anchor,true));
-  card.append(listing);
+  appendCodeListing(card, listing, (side === 'old' ? 'Earlier' : 'Compared') + ' '
+    + sides[anchor.side] + ' source · ' + anchor.path);
   return card;
 }
 function publishedOriginal(row, old) {
@@ -1205,10 +1245,11 @@ function inboxRow(row) {
   if (row.taskId) params.version = row.taskId;
   const open = link('', '/?' + new URLSearchParams(params), 'inbox-row');
   const identity = el('span', '', 'inbox-pr');
-  identity.append(el('span', repo(row.pr), 'mono'), el('strong', row.pr.title));
+  if (row.title) identity.append(el('span', repo(row.pr), 'mono'));
+  identity.append(el('strong', row.title || repo(row.pr)));
   const revision = el('span', row.head ? 'HEAD ' + short(row.head) : 'Unknown head', 'mono inbox-head');
   if (row.head) revision.title = row.head;
-  open.append(identity, tag(row.status || 'Unknown', statusTone(row.status)), revision, el('span', row.mode, 'inbox-mode'));
+  open.append(identity, tag(investigationStatus(row.status), statusTone(row.status)), revision, el('span', row.mode, 'inbox-mode'));
   const item = el('li');
   item.append(open);
   return item;
@@ -1218,11 +1259,12 @@ function renderInbox() {
   const rows = inbox.rows.filter(row => group.value === 'all' || row.group === group.value);
   const selectedStatus = status.value;
   const statuses = [...new Set(rows.map(row => row.status || 'Unknown'))].sort();
-  status.replaceChildren(new Option('All statuses', 'all'), ...statuses.map(value => new Option(value, value)));
+  status.replaceChildren(new Option('All statuses', 'all'),
+    ...statuses.map(value => new Option(investigationStatuses.get(value) || 'Unknown', value)));
   status.value = statuses.includes(selectedStatus) ? selectedStatus : 'all';
   const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const matches = rows.filter(row => (status.value === 'all' || (row.status || 'Unknown') === status.value)
-    && terms.every(term => (repo(row.pr) + ' ' + row.pr.title).toLowerCase().includes(term)));
+    && terms.every(term => (repo(row.pr) + ' ' + (row.title || '')).toLowerCase().includes(term)));
   $('inbox-clear').disabled = !search.value && group.value === 'all' && status.value === 'all';
   $('inbox-count').textContent = inbox.loading ? 'Loading saved records…' : matches.length + ' of ' + inbox.rows.length + ' loaded records';
   n.setAttribute('aria-busy', String(inbox.loading));
@@ -1264,15 +1306,18 @@ async function loadInbox() {
   const tasksById = new Map(state.tasks.map(t => [t.id, t]));
   inbox.rows = [
     ...state.tasks.map(t => ({
-      id: t.id, group: 'tasks', pr: t.pr, status: t.status, head: t.identity?.revisions?.head,
+      id: t.id, group: 'tasks', pr: t.pr, title: t.pr.title, status: t.status, head: t.identity?.revisions?.head,
       mode: candidateSources[t.mode] || t.mode || 'Unknown mode',
     })),
     ...state.reviews.map(r => {
       const version = r.versions?.at(-1);
+      const head = version?.revisions?.head;
       const task = tasksById.get(version?.task_id);
+      const matchesHead = head && head === task?.identity?.revisions?.head;
       return {
-        id: r.id, group: 'reviews', taskId: version?.task_id, pr: task?.pr || r.pr,
-        status: task?.status, head: version?.revisions.head,
+        id: r.id, group: 'reviews', taskId: version?.task_id, pr: r.pr, head,
+        title: matchesHead ? task.pr?.title : undefined,
+        status: matchesHead ? task.status : undefined,
         mode: reviewModes[r.mode] || r.mode || 'Unknown mode',
       };
     }),
@@ -1301,7 +1346,8 @@ function applyURL() {
   if (Object.hasOwn(sides,url.searchParams.get('view'))) c.sourceSide = url.searchParams.get('view');
   const line = Number(url.searchParams.get('line')), side = url.searchParams.get('side');
   if (state.mode === 'human') {
-    c.taskId = url.searchParams.get('version'); c.candidateId = url.searchParams.get('candidate');
+    c.taskId = url.searchParams.get('version') || humanTask()?.id;
+    c.candidateId = url.searchParams.get('candidate');
   }
   const task = activeTask();
   const file = task && (c.path ? task.view.files.find(f => f.path === c.path) : activeFile(task));

@@ -271,6 +271,10 @@ try {
   await m.reload();await mode(m,'Re-review');await panel(m,'Compare');
   await btn(m,'Run manual comparison').click();
   await expect(m.locator('.source-card')).toHaveCount(2);await shot(m,'mobile-03-compare');
+  const earlierSource = m.getByRole('region',{name:'Earlier HEAD source · quota.py'});
+  await expect(earlierSource).toBeVisible();
+  assert.equal(await earlierSource.evaluate(region => region.scrollWidth), await earlierSource.evaluate(region => region.clientWidth));
+  await expect(earlierSource).not.toHaveAttribute('tabindex', '0');
   await d.reload();
   await guide(d,'Re-review');
   await expect(rail(d).getByText('STILL_PRESENT',{exact:true})).toBeVisible();
@@ -280,6 +284,81 @@ try {
   await m.reload();await expect(btn(m,'Caller code')).toHaveAttribute('aria-pressed','true');
   await btn(m,'Open result · STILL_PRESENT').click();await expect(rail(m).getByText('STILL_PRESENT',{exact:true})).toBeVisible();
   flows.push('v1→v2 rename and moved anchor, old comment stays on v1, mobile caller and result panels.');
+
+  const [v1, v2] = (await data(d, '/api/human/review/' + reviewId)).tasks;
+  const v2Head = v2.view.revisions.head;
+  const desktopComparison = d.url(), mobileComparison = m.url();
+  const beforeOpening = writes.length;
+  const reviewRow = p => queue(p).filter({hasText:'Owned Mock'});
+  async function checkLinkedReview(p, task, judgment) {
+    const head = task.view.revisions.head;
+    await expect(p.locator('#intro h1')).toHaveText(task.pr.title);
+    await expect(p.locator('#intro').getByText('Frozen HEAD ' + head.slice(0,7), {exact:true})).toHaveAttribute('title', head);
+    await expect(p.locator('#intro').getByText('Investigation completed', {exact:true})).toBeInViewport();
+    await expect(rail(p).getByRole('heading',{name:'Finding',exact:true})).toBeInViewport();
+    await expect(rail(p).locator('#changed-evidence')).toHaveAttribute('title', new RegExp(head + '$'));
+    await expect(p.locator('#disposition-status')).toHaveText('Local judgment · ' + judgment);
+    assert.equal(new URL(p.url()).searchParams.get('version'), task.id);
+  }
+  for (const [p, layout] of [[d,'desktop'], [t,'tablet'], [m,'mobile']]) {
+    await p.goto(base);
+    await expect(reviewRow(p).locator('strong')).toHaveText(v2.pr.title);
+    await inbox(p).getByLabel('Group').selectOption('reviews');
+    await inbox(p).getByLabel('Investigation status').selectOption({label:'Completed'});
+    await expect(inbox(p).getByLabel('Group')).toHaveValue('reviews');
+    await expect(inbox(p).getByLabel('Investigation status')).toHaveValue('COMPLETED');
+    await expect(queue(p)).toHaveCount(1);
+    await expect(reviewRow(p).getByText('Investigation completed', {exact:true})).toBeVisible();
+    await expect(reviewRow(p).locator('.inbox-head')).toHaveAttribute('title', v2Head);
+    const target = new URL(await reviewRow(p).getAttribute('href'), base);
+    assert.equal(target.searchParams.get('review'), reviewId);
+    assert.equal(target.searchParams.get('version'), v2.id);
+    if (p === d) await shot(d,'desktop-linked-review-inbox');
+    if (p === m) await reviewRow(p).tap();
+    else await reviewRow(p).press('Enter');
+    await checkLinkedReview(p, v2, 'Undecided');
+    if (p !== d) await expect(btn(panels(p),'Review')).toHaveAttribute('aria-current','true');
+    await p.reload();
+    await checkLinkedReview(p, v2, 'Undecided');
+    await shot(p,layout + '-linked-review-v2');
+  }
+  await rail(t).getByText('Workspace history & exports',{exact:true}).click();
+  await btn(t,'Open v1').click();
+  await checkLinkedReview(t, v1, 'Accepted');
+  await t.reload();
+  await checkLinkedReview(t, v1, 'Accepted');
+  await t.goto(base + '/?' + new URLSearchParams({review:reviewId, panel:'review'}));
+  await checkLinkedReview(t, v1, 'Accepted');
+  const missingVersion = 'task-' + '0'.repeat(64);
+  await t.goto(base + '/?' + new URLSearchParams({review:reviewId, version:missingVersion, panel:'review'}));
+  await expect(rail(t)).toContainText('The linked review does not contain the requested frozen version.');
+  await expect(t.locator('#disposition-status')).toHaveCount(0);
+  assert.equal(new URL(t.url()).searchParams.get('version'), missingVersion);
+  flows.push('Inbox advertises and opens the exact linked v2 with an independent Undecided judgment at 1440, 768 and 390 px, including reload. Explicit and legacy v1 routes preserve the Accepted judgment.');
+
+  // Simulate the selected task falling outside the bounded recent task list.
+  await t.route(base + '/api/tasks', async route => {
+    const response = await route.fetch();
+    const tasks = await response.json();
+    assert.ok(tasks.some(task => task.id === v2.id));
+    await route.fulfill({response, json:tasks.filter(task => task.id !== v2.id)});
+  }, {times:1});
+  await t.goto(base);
+  await expect(reviewRow(t).locator('strong')).toHaveText(v2.pr.repository + ' #' + v2.pr.number);
+  await expect(reviewRow(t)).not.toContainText(v1.pr.title);
+  await expect(reviewRow(t).locator('.inbox-head')).toHaveAttribute('title',v2Head);
+  await inbox(t).getByLabel('Group').selectOption('reviews');
+  await inbox(t).getByLabel('Investigation status').selectOption({label:'Unknown'});
+  await expect(inbox(t).getByLabel('Group')).toHaveValue('reviews');
+  await expect(queue(t)).toHaveCount(1);
+  await expect(reviewRow(t).getByText('Investigation status unknown',{exact:true})).toBeVisible();
+  await shot(t,'tablet-linked-review-missing-summary');
+  await reviewRow(t).press('Enter');
+  await checkLinkedReview(t, v2, 'Undecided');
+  assert.equal(writes.length, beforeOpening);
+  flows.push('A missing recent summary uses stable PR identity, retains the known head and exact version link, and exposes an unknown status filter. Opening and changing versions are read-only.');
+  await d.goto(desktopComparison);
+  await m.goto(mobileComparison);
 
   const mock=await m.request.post(base+'/api/human/mock-state',{data:{version:'v2',can_comment:true,fault:'AFTER_EFFECT',complete_listing:true}});
   assert(mock.ok());await mode(m,'Human review');await panel(m,'Review');
@@ -344,9 +423,11 @@ try {
   const stoppedId = (await stopped.json()).id;
   await expect.poll(async () => (await data(m, '/api/task/' + stoppedId)).status).toBe('STOPPED');
   await m.goto(base);
-  await inbox(m).getByLabel('Status').selectOption('STOPPED');
+  await inbox(m).getByLabel('Investigation status').selectOption({label:'Stopped'});
+  await expect(inbox(m).getByLabel('Investigation status')).toHaveValue('STOPPED');
   await expect(queue(m)).toHaveCount(1);
   await expect(queue(m).first()).toContainText('Offline policy');
+  await expect(queue(m).first().getByText('Investigation stopped',{exact:true})).toBeVisible();
   await shot(m,'mobile-inbox-stopped');
   await queue(m).first().click();
   await panel(m,'Files');
@@ -368,8 +449,16 @@ try {
   await expect(located(m)).toHaveCount(0);
   await m.reload();
   await expect(m.locator('#code .evidence-alert')).toBeVisible();
+  const staleDiff = m.getByRole('region',{name:'Unified diff · limits.py'});
+  await expect(staleDiff).toHaveAttribute('tabindex','0');
+  await m.locator('#code').focus();
+  await m.keyboard.press('Tab');
+  await expect(staleDiff).toBeFocused();
+  await m.keyboard.press('ArrowRight');
+  await expect.poll(() => staleDiff.evaluate(region => region.scrollLeft)).toBeGreaterThan(0);
   await shot(m,'mobile-stale-link');
   flows.push('An offline task stops at its tool budget, exposes partial capture and a long path, and stale links stay visible after reload at 390 px.');
+  flows.push('Tab reaches the named overflowing unified diff at 390 px and ArrowRight scrolls it. A short compare listing is outside the tab sequence.');
 
   const audit=JSON.parse(py(`
 import json,sqlite3,sys

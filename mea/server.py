@@ -140,8 +140,10 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200, tasks.public(task))
 
 
-def serve(port=8810, task_dir=None):
-    with ThreadingHTTPServer(('127.0.0.1', port), Handler) as server:
+def serve(port=8810, task_dir=None, bind='127.0.0.1'):
+    if bind not in ('127.0.0.1', '0.0.0.0'):
+        raise ValueError('BIND_ADDRESS')
+    with ThreadingHTTPServer((bind, port), Handler) as server:
         server.investigations = tasks.Manager(task_dir)
         try:
             server.human_reviews = Service(server.investigations.store)

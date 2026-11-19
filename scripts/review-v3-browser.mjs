@@ -4,6 +4,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import {checkReviewProvenance} from './review-provenance-check.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const artifacts = path.join(root, 'artifacts');
@@ -246,7 +247,7 @@ from pathlib import Path
 with sqlite3.connect((Path(sys.argv[1])/'tasks.sqlite3').as_uri()+'?mode=ro',uri=True) as db:
     mock=json.loads(db.execute("SELECT doc FROM human_records WHERE kind='mock'").fetchone()[0])
     states=[json.loads(r[0])['status'] for r in db.execute("SELECT doc FROM human_records WHERE kind='send' ORDER BY rowid")]
-    live=db.execute("SELECT count(*) FROM tasks WHERE json_extract(doc,'$.mode')='REAL_AI'").fetchone()[0]
+    live=db.execute("SELECT count(*) FROM tasks WHERE json_extract(doc,'$.mode')='REAL_PROVIDER_DEEPSEEK'").fetchone()[0]
 print(json.dumps(dict(attempts=mock['post_attempts'],comments=len(mock['comments']),send_states=states,real_tasks=live)))
 `,[session]));
   assert.deepEqual(audit,{attempts:2,comments:2,send_states:['MOCK_PUBLISHED','MOCK_PUBLISHED_RECONCILED'],real_tasks:0});
@@ -263,9 +264,12 @@ print(json.dumps(dict(attempts=mock['post_attempts'],comments=len(mock['comments
   assert.deepEqual(await data(d, '/api/human/reviews'), []);
   assert.deepEqual(await data(d, '/api/tasks'), []);
   flows.push('Server restart preserves all reviews and outcomes. A clean SQLite directory starts with empty state.');
+  await checkReviewProvenance(d, base, root, path.join(out, 'fresh-task-db'));
+  flows.push('The desktop header and candidate card distinguish saved Real and deterministic Mock sources from Mock writeback.');
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   await writeFile(path.join(out,'verification.json'),JSON.stringify({status:'PASS',flows,screenshots,
     errors,external,writes,audit,real_model_requests:0,real_github_writes:0,exit_code:0},null,2)+'\n');
-  console.log('PASS: desktop and mobile source navigation, confirmation, Mock reconciliation, five comparison outcomes and persistence.');
+  console.log('PASS: desktop and mobile source navigation, candidate provenance, confirmation, Mock reconciliation, five comparison outcomes and persistence.');
 } catch(error) {
   for(const [i,c] of contexts.entries()) await c.pages()[0]?.screenshot({path:path.join(out,'failure-'+i+'.png')}).catch(()=>{});
   await writeFile(path.join(out,'failure.json'),JSON.stringify({flows,screenshots,errors,external,writes,message:error.stack,exit_code:1},null,2));

@@ -1,5 +1,7 @@
 Path	Source path	Source checkpoint	Role or adaptation
+.dockerignore	New	M5	Allowlist for the local demo container build context
 .gitignore	New	Batch 1	Generated local state exclusions
+Dockerfile	New	M5	Standard-library workbench container with unprivileged runtime
 README.md	New	New	Request profiles and existing workbench instructions
 SOURCE-MANIFEST.tsv	New	Batch 1 to 4	Explicit tracked file allowlist
 THIRD_PARTY_NOTICES.md	New	Batch 2 to 4	Notices for Review v3 fonts, package dependency scope and MIT benchmark material
@@ -33,6 +35,12 @@ benchmarks/reviewbench/vendor/ReviewBench/LICENSE	review-bench/ReviewBench/LICEN
 benchmarks/reviewbench/vendor/ReviewBench/scripts/eval/input-validation.ts	review-bench/ReviewBench/scripts/eval/input-validation.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/vendor/ReviewBench/scripts/lib/types.ts	review-bench/ReviewBench/scripts/lib/types.ts	f223ce33558a6d211fd222b1f7ff2fd7b44403d4	Byte-exact upstream MIT reader source or corresponding license
 benchmarks/reviewbench/verify.py	benchmarks/reviewbench/verify.py + benchmarks/reviewbench/v2/offline.py	e41bf60796c4ddae54566388636dd943ac623465	Offline replay, format and synthetic scoring verification
+compose.yaml	New	M5	Loopback port, resource limits and ephemeral demo state
+docs/DESIGN_TRADEOFFS.md	New	M5	Product design choices and evidence
+docs/OPERATING_GUIDE.md	New	M5	Existing workbench and attended CLI instructions moved from the README
+docs/REVIEWBENCH_AUXILIARY.md	New	M5	Aggregate novel-defect blind review without sample-level data
+docs/demo/mea-review.mp4	New	M5	Workbench recording with self-owned synthetic fixtures, a saved Real model trace and Mock send
+docs/demo/preview.jpg	New	M5	Still from the synthetic workbench recording
 fixtures/demo/counterexample.json	fixtures/investigation/counterexample.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
 fixtures/demo/none-return.json	fixtures/investigation/none-return.json	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact owned fixture
 fixtures/demo/static-assertion.json	New	Batch 1	Synthetic static finding and citation fixture
@@ -81,16 +89,21 @@ mea/investigation/validation.py	mea/investigation/validation.py	344acf0c8bd59157
 mea/investigation/verification.py	mea/investigation/verification.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Frozen-evidence candidate verification packet and response validation
 mea/investigation/verification_v2.py	mea/investigation/verification_v2.py	8556f980d0873ed55e2583df9a9dd6a57670371a	Verification v2 and v2.1 definitions, companion patches and citation checks
 mea/investigation/wire.py	mea/investigation/wire.py	3b9c08d81735d8b55a48bc6f6a47d0f7d74ce3b4	Single-attempt wire adapter tested with injected connection and no live launcher
+mea/mcp_server.py	New	M5	Read-only stdio transport for frozen cross-file evidence tools
 mea/patch.py	mea/patch.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/review.py	mea/review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Byte-exact
 mea/server.py	mea/server.py	344acf0c8bd59157e81d03aa771547e2b330986e	Expose read-only provider readiness and explicit Mock task admission
 package-lock.json	package-lock.json	344acf0c8bd59157e81d03aa771547e2b330986e	Pinned browser test dependencies retained
 package.json	New	Batch 1	Expose separate Review v3 browser verification
+scripts/mcp-roundtrip.mjs	New	M5	Official SDK interoperability check on an owned snapshot
 scripts/offline-browser.mjs	New	Batch 1	Verify classic and scoped Mock provider workflow
+scripts/record-demo.mjs	New	M5	Synthetic workbench tour and optional saved Real model trace capture
+scripts/review-provenance-check.mjs	New	M5	Synthetic browser regression for candidate origin and writeback transport
 scripts/review-v3-browser.mjs	scripts/review_v3_browser.mjs	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Verify that real provider activation remains disabled
 tests/fake_github.py	New	M4	Loopback fake of the GitHub REST endpoints used by the writeback lane; synthetic data
 tests/github_fixtures.py	New	M2	Self-owned in-memory GitHub REST fixture
 tests/investigation_fixtures.py	tests/investigation_fixtures.py	344acf0c8bd59157e81d03aa771547e2b330986e	Self-owned in-memory fixture helper without collector
+tests/test_container.py	New	M5	Container configuration and HTTP bind regression tests
 tests/test_controlled_investigation.py	tests/test_real_investigation.py	New	Existing simulation tests plus request-profile regressions
 tests/test_cross_file_tools.py	New	M2	Cross-file tool, paging and citation validation regressions
 tests/test_deepseek_transport.py	New	M2	Live lane, transport and credential tests with a fake HTTPS connection
@@ -100,6 +113,7 @@ tests/test_holdout_adjudication.py	tests/test_holdout_adjudication.py	8556f980d0
 tests/test_human_review.py	tests/test_human_review.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Port Mock and comparison regressions to batch 1 tools
 tests/test_human_review_api.py	tests/test_human_review_api.py	5e8d91e5fd7678f93cda4f44632157395bfa2bdf	Run Mock tests through the local product HTTP handler
 tests/test_investigation.py	tests/test_investigation.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained investigation regressions with local fixtures
+tests/test_mcp_server.py	New	M5	Read-only protocol validation and official SDK round trip
 tests/test_provider_process.py	New	Batch 3	Product HTTP and real process-kill test using local Mock transport
 tests/test_review.py	tests/test_review.py	344acf0c8bd59157e81d03aa771547e2b330986e	Retained static regressions with synthetic fixtures
 tests/test_reviewbench_offline.py	New	Batch 4	Regression coverage for freeze, anchors, C1 grid and arithmetic

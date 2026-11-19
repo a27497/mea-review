@@ -16,11 +16,14 @@ def main():
     serve = commands.add_parser('serve')
     serve.add_argument('--port', type=int, default=8810)
     serve.add_argument('--task-dir', type=Path, help='Local SQLite task directory')
+    # 0.0.0.0 is for a container whose port is published on the host loopback only. Requests must
+    # still carry Host 127.0.0.1:PORT, so the container port must equal the published port.
+    serve.add_argument('--bind', choices=['127.0.0.1', '0.0.0.0'], default='127.0.0.1', help='Listen address')
     args = parser.parse_args()
     try:
         if args.command == 'serve':
             from .server import serve as start
-            start(args.port, args.task_dir)
+            start(args.port, args.task_dir, args.bind)
         else:
             with args.snapshot.open('rb') as handle:
                 data = decode(handle.read(2_000_001))

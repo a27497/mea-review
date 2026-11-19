@@ -9,14 +9,21 @@ duplicate that cannot be drafted. The lines that replaced an OUTDATED comment ar
 mapped through every later increment; a candidate inside them, or in a file whose
 earlier replacement lines could not be mapped, cannot be drafted either. When an
 incomplete listing or a non-linear step leaves the file's path lineage unknown (a
-rename may have been omitted), no head-side candidate can be drafted until a later
-listing names the file by its last known path.
+rename may have been omitted), no head-side candidate can be drafted in that or any
+later version of the review. A later listing that names the last known path does not
+end this: the name may now belong to another file, and no frozen input records the
+file's identity across the step that was not listed. A stored result written before
+this rule (no lineage_rule) has unknown lineage for head-side drafting.
 """
 import re
 
 from ..patch import parse as parse_patch
 
 POLICY = 'm4-incremental-anchor-v1'
+# Results carrying this rule never clear an UNKNOWN lineage; results without it are legacy.
+LINEAGE_RULE = 'm5-unknown-lineage-sticky-v1'
+LEGACY_REASON = 'Carried from a re-review stored before the path lineage rule; the file holding the replacement lines is unknown.'
+UNLISTED_ANCHOR = 'Increment file listing is incomplete; absence does not prove the file is unchanged.'
 SENT = {'PUBLISHED', 'PUBLISHED_RECONCILED', 'MOCK_PUBLISHED', 'MOCK_PUBLISHED_RECONCILED'}
 
 
@@ -65,8 +72,8 @@ def map_line(patch, line):
 
 
 def changed_file(nv, path):
-    # A copy leaves the original file in place, so only renames and edits move a line.
-    return next((f for f in nv['files'] if f['base_path'] == path and f['status'] not in ('context', 'copied')), None)
+    # A copy leaves the original in place, and an addition has no base file.
+    return next((f for f in nv['files'] if f['base_path'] == path and f['status'] not in ('context', 'copied', 'added')), None)
 
 
 def carry_region(region, region_head, relation, old_head, nv, complete):
@@ -99,20 +106,39 @@ def carry_region(region, region_head, relation, old_head, nv, complete):
     return dict(path=f['path'], start=min(lines), end=max(lines)), None
 
 
+def legacy(result):
+    """A stored result without the current lineage policy cannot prove continuity."""
+    return result.get('lineage_rule') != LINEAGE_RULE
+
+
+def unresolved_location(row):
+    marker = row.get('replaced_region_unresolved')
+    if marker is None and row.get('reason') == UNLISTED_ANCHOR:
+        # Older results recorded an unlisted anchor without a lineage marker.
+        return dict(path=row['old']['path'], reason=UNLISTED_ANCHOR, lineage='UNKNOWN')
+    return marker
+
+
+def unknown_lineage(result):
+    return legacy(result) or any(
+        marker.get('lineage') != 'KNOWN'
+        for row in result['comments'] if (marker := unresolved_location(row))
+    )
+
+
 def carry_unresolved(marker, linked, nv, complete):
     """Carry an unresolved replacement-region marker through this increment, or None once the file is removed.
 
     lineage KNOWN: the file is at marker['path']. lineage UNKNOWN: it may have been renamed in a
-    step whose listing was incomplete or not linear; the marker keeps the last known path."""
-    if not linked:
+    step whose listing was incomplete or not linear; the marker keeps the last known path. UNKNOWN
+    is final, and a marker without a lineage field (an older record) is UNKNOWN."""
+    if marker.get('lineage') != 'KNOWN' or not linked:
         return dict(path=marker['path'], reason=marker['reason'], lineage='UNKNOWN')
     f = changed_file(nv, marker['path'])
     if f is not None:
-        # Listed by its last known path: the lineage is known again from this increment's base.
+        # Listed by its known path: the marker follows a rename and ends with a removal.
         return None if f['status'] == 'removed' else dict(path=f['path'], reason=marker['reason'], lineage='KNOWN')
-    if marker.get('lineage') == 'UNKNOWN' or not complete:
-        return dict(path=marker['path'], reason=marker['reason'], lineage='UNKNOWN')
-    return dict(path=marker['path'], reason=marker['reason'], lineage='KNOWN')
+    return dict(path=marker['path'], reason=marker['reason'], lineage='KNOWN' if complete else 'UNKNOWN')
 
 
 def check(old, new, sends, observed=None, prior=()):
@@ -125,14 +151,14 @@ def check(old, new, sends, observed=None, prior=()):
     last = {}
     for earlier in prior:
         for row in earlier['comments']:
-            last[row['send_id']] = (row, earlier.get('new_head'))
+            last[row['send_id']] = (row, earlier.get('new_head'), not legacy(earlier))
     comments = []
     for s in sends:
         if s['status'] not in SENT or not s.get('remote_comment'):
             continue
         c = s['remote_comment']
         p = s['payload']
-        before, before_head = last.get(s['id'], (None, None))
+        before, before_head, current_rule = last.get(s['id'], (None, None, True))
         if p['commit_id'] == old_head:
             before = None  # Sent against this increment's base: map the payload itself.
         if before and before['status'] == 'CURRENT' and before['new']:
@@ -142,10 +168,14 @@ def check(old, new, sends, observed=None, prior=()):
                    new=None, status='NEEDS_RECHECK', replaced_head_lines=None, republish='NEVER_AUTOMATIC', reason=None)
         if before and before['status'] != 'CURRENT':
             row.update(status=before['status'], reason='Carried from the earlier re-review of ' + before['old']['commit_id'][:12] + '.')
+            earlier = unresolved_location(before)
             if before['status'] == 'OUTDATED':
                 # Keep protecting the lines that replaced the outdated comment, in this increment's coordinates.
-                earlier = before.get('replaced_region_unresolved')
                 linked = relation == 'INCREMENTAL_LINEAR' and before_head == old_head
+                if not current_rule:
+                    # An older record cannot show whether a rename was omitted on the way here.
+                    earlier = dict(path=(earlier or before.get('replaced_head_lines') or p)['path'],
+                                   reason=(earlier or {}).get('reason') or LEGACY_REASON)
                 if earlier:
                     # Once unresolved, the file stays unresolved; a listed rename moves the marker, and an
                     # incomplete or non-linear step leaves its path unknown.
@@ -156,9 +186,12 @@ def check(old, new, sends, observed=None, prior=()):
                     region, unresolved = carry_region(before.get('replaced_head_lines'), before_head, relation, old_head, nv, complete)
                     row['replaced_head_lines'] = region
                     if unresolved:
-                        marker = carry_unresolved(dict(path=before['replaced_head_lines']['path'], reason=unresolved), linked, nv, complete)
+                        marker = carry_unresolved(dict(path=before['replaced_head_lines']['path'], reason=unresolved, lineage='KNOWN'),
+                                                  linked, nv, complete)
                         if marker:
                             row['replaced_region_unresolved'] = marker
+            elif earlier:
+                row['replaced_region_unresolved'] = earlier
         elif relation != 'INCREMENTAL_LINEAR' or p['commit_id'] != old_head:
             row['reason'] = 'Comment commit is not the base of a linear increment; manual recheck.'
         elif p['side'] == 'LEFT':
@@ -167,7 +200,8 @@ def check(old, new, sends, observed=None, prior=()):
         else:
             f = changed_file(nv, p['path'])
             if f is None and not complete:
-                row['reason'] = 'Increment file listing is incomplete; absence does not prove the file is unchanged.'
+                row.update(reason=UNLISTED_ANCHOR, replaced_region_unresolved=dict(
+                    path=p['path'], reason=UNLISTED_ANCHOR, lineage='UNKNOWN'))
             elif f is None:
                 row.update(status='CURRENT', new=dict(commit_id=new_head, path=p['path'], line=p['line'], side='RIGHT'),
                            reason='File unchanged in the increment.')
@@ -200,21 +234,27 @@ def check(old, new, sends, observed=None, prior=()):
                      and r['replaced_head_lines']['start'] <= ch['line'] <= r['replaced_head_lines']['end']), None)
         # An earlier replacement region that could not be mapped keeps the whole file unresolved. While its
         # path lineage is unknown, any head-side file may hold that region.
-        near = near or next((r for r in comments if r['status'] == 'OUTDATED' and r.get('replaced_region_unresolved')
-                             and ch['side'] == 'head' and (r['replaced_region_unresolved'].get('lineage') == 'UNKNOWN'
+        near = near or next((r for r in comments if r.get('replaced_region_unresolved')
+                             and ch['side'] == 'head' and (r['replaced_region_unresolved'].get('lineage') != 'KNOWN'
                                                            or r['replaced_region_unresolved']['path'] == ch['path'])), None)
         if dup:
             candidates.append(dict(candidate_id=cand['id'], change=ch, status='DUPLICATE_OF_SENT_COMMENT', comment_id=dup['comment_id'],
                                    reason='A sent comment already covers this mapped line; drafting is refused.'))
         elif near:
-            unknown = (near.get('replaced_region_unresolved') or {}).get('lineage') == 'UNKNOWN'
+            marker = near.get('replaced_region_unresolved')
+            if marker and marker.get('lineage') != 'KNOWN':
+                reason = ('The file holding an earlier comment anchor or its replacement lines is unknown after an incomplete or non-linear '
+                          'increment, or an older re-review record; refused for every head-side file.')
+            elif marker:
+                reason = ('The lines that replaced an outdated comment in this file could not be mapped (' + marker['reason'].rstrip('.') +
+                          '); refused for the whole file, whether or not this line overlaps them.')
+            else:
+                reason = 'Inside the lines that replaced an outdated comment. Not a relocation; a human decides whether it is a new issue.'
             candidates.append(dict(candidate_id=cand['id'], change=ch, status='AT_OUTDATED_COMMENT_LOCATION', comment_id=near['comment_id'],
-                                   reason='The file holding the lines that replaced an outdated comment is unknown after an incomplete or non-linear increment; '
-                                          'refused until frozen evidence names it.' if unknown else
-                                          'Inside the lines that replaced an outdated comment. Not a relocation; a human decides whether it is a new issue.'))
+                                   reason=reason))
         else:
             candidates.append(dict(candidate_id=cand['id'], change=ch, status='NEW', comment_id=None,
                                    reason='Validated candidate on an incremental change; not tied to a sent comment.'))
-    return dict(policy=POLICY, relation=relation, old_head=old_head, new_head=new_head, comments=comments, candidates=candidates,
+    return dict(policy=POLICY, lineage_rule=LINEAGE_RULE, relation=relation, old_head=old_head, new_head=new_head, comments=comments, candidates=candidates,
                 observed_remote=observed is not None,
                 limitations='Line mapping uses the increment patch only. GitHub may mark a comment outdated by its own diff-hunk rule; both are recorded.')

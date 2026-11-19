@@ -24,6 +24,17 @@ const owns = review => review?.mode === 'MOCK_OWNED_REVIEW';
 const liveReview = review => review?.mode === 'LIVE_GITHUB_REVIEW';
 const liveSend = send => send?.mode === 'LIVE_GITHUB';
 const humanTask = () => state.human?.tasks.find(t => t.id === current().taskId) || state.human?.tasks[0];
+const candidateSources = {
+  REAL_PROVIDER_DEEPSEEK: 'Real model (DeepSeek)',
+  MOCK_REVIEW_DEMO_NOT_AI: 'Deterministic Mock',
+  MOCK_PROVIDER_NOT_AI: 'Mock provider',
+  OFFLINE_POLICY_NOT_AI: 'Offline policy',
+};
+const writebackModes = {
+  MOCK_GITHUB_NOT_LIVE: 'Mock (loopback)',
+  LIVE_GITHUB: 'GitHub (CLI)',
+  LOCAL_PREVIEW_ONLY: 'Local preview only',
+};
 const activeTask = () => state.mode === 'completed' ? state.task : state.mode === 'human' ? humanTask() : null;
 const candidate = () => humanTask()?.candidates.find(c => c.id === current().candidateId) || humanTask()?.candidates[0];
 const currentDraft = () => state.human?.drafts.find(d => d.task_id === humanTask()?.id && d.candidate_id === candidate()?.id);
@@ -72,6 +83,13 @@ function card(title, subtitle, fn, id) {
 }
 const pre = value => el('pre', JSON.stringify(value, null, 2));
 const tag = (value, tone = '') => el('span', value, 'tag ' + tone);
+function reviewLabels(task) {
+  const version = state.human.versions.find(v => v.task_id === task.id);
+  const source = candidateSources[version?.candidate_source] || 'Unknown';
+  const writeback = writebackModes[version?.writeback_mode] || 'Unknown';
+  return [el('span', 'Candidate source: ' + source, 'tag candidate-source'),
+    el('span', 'Writeback: ' + writeback, 'tag writeback-mode')];
+}
 const endpoint = (path, id) => path + encodeURIComponent(id);
 async function request(path, data) {
   const res = await fetch(path, data === undefined ? {} : {
@@ -167,23 +185,24 @@ function render() {
     ? (mock ? 'Review a conditional candidate' : 'Human review') : t ? t.pr.title : 'Review a frozen pull request';
   document.title = title + ' · MEA Review';
   $('crumb').textContent = repo(pr);
-  document.querySelector('.switch-label').textContent = narrow.matches ? 'Switch case' : mock ? 'Mock fixture' : 'Frozen snapshot';
+  document.querySelector('.switch-label').textContent = narrow.matches ? 'Switch case' : state.mode === 'compare' && mock ? 'Mock fixture' : 'Frozen snapshot';
   document.querySelectorAll('[data-case]').forEach(b => currentAttr(b, b.dataset.case === state.mode));
   document.querySelector('[data-panel="code"]').textContent = state.mode === 'compare' ? 'Compare' : 'Diff';
   const intro = $('intro');
   const meta = el('div', '', 'intro-meta');
   if (pr) meta.append(el('span', repo(pr), 'mono'));
   if (state.mode === 'completed' && t) meta.append(tag(t.mode.replaceAll('_', ' ')));
-  if (mock) meta.append(tag('MOCK' + (t ? ' · ' + label(t) : ''), 'accent'));
+  if (state.mode === 'human' && t) meta.append(...reviewLabels(t));
+  if (state.mode === 'compare' && mock) meta.append(tag('MOCK', 'accent'));
   if (t) meta.append(el('span', short(t.view.revisions.head), 'revision'));
   meta.append(button('Demo guide', () => $('demo-dialog').showModal(), 'button', 'demo-guide-open'));
   const sub = state.mode === 'compare' ? (mock ? (narrow.matches ? state.versions.length + ' frozen versions · Manual comparison' : 'Owned ' + state.versions[0]?.label + '–' + state.versions.at(-1)?.label + ' fixtures · Compare frozen evidence by hand') : 'Compare saved frozen versions by hand')
-    : state.mode === 'human' ? (mock ? (narrow.matches ? 'Owned offline policy · No model call' : 'Owned ' + label(t) + ' fixture · Draft preparation and simulated dispatch') : 'Human confirmation · Live publishing disabled')
+    : state.mode === 'human' ? 'Review frozen evidence and confirm the exact comment.'
     : t ? (narrow.matches ? 'Frozen HEAD ' + short(t.view.revisions.head) + ' · ' + fileCount(t) : prSummary(t))
       : 'Open a saved task, use the Demo guide, or import a snapshot.';
   intro.replaceChildren(meta, el('h1', title), el('p', sub, 'intro-sub'));
   $('footer').textContent = state.mode === 'compare' ? 'Owned fixtures    ·    Manual comparison'
-    : state.mode === 'human' ? (mock ? 'Owned Mock fixture' : 'Frozen snapshot') + '    ·    Live publish disabled'
+    : state.mode === 'human' ? 'Frozen snapshot    ·    Human confirmation'
     : t ? 'Frozen HEAD ' + short(t.view.revisions.head) + '    ·    ' + fileCount(t) : 'Read-only review workspace';
   renderFiles(); renderCode(); renderRail();
   setPanel(state.panel);
@@ -280,7 +299,7 @@ function renderFiles() {
     for (const f of contexts) n.append(treeRow(f, f === file, () => chooseFile(f, t, 'head'), 'HEAD'));
   }
   const totals = main.reduce((a,f) => {const c = changeCounts(f); return [a[0] + c.added, a[1] + c.removed];}, [0,0]);
-  n.append(el('p', owns(state.human) && state.mode === 'human' ? 'Source from the owned Mock fixture.' : '+' + totals[0] + '  −' + totals[1] + '  ·  ' + (t.view.coverage.complete_listing ? 'Complete file listing' : 'Partial file listing'), 'tree-footer'));
+  n.append(el('p', owns(state.human) && state.mode === 'human' ? 'Source from the owned synthetic snapshot.' : '+' + totals[0] + '  −' + totals[1] + '  ·  ' + (t.view.coverage.complete_listing ? 'Complete file listing' : 'Partial file listing'), 'tree-footer'));
 }
 const keywords = new Set(('def class import from as return assert for in if elif else and or not is try except finally with lambda yield while raise async await None True False del pass break continue nonlocal global match case').split(' '));
 function syntax(code, str) {
@@ -434,7 +453,9 @@ function exportsFor(task, review) {
   return wrap;
 }
 function renderCompleted(n, t) {
-  n.append(el('h2','Offline investigation','rail-heading'));
+  // Real and Mock provider tasks are labelled as such; their request count comes from the task record.
+  const heading = {REAL_PROVIDER_DEEPSEEK:'Real model investigation', MOCK_PROVIDER_NOT_AI:'Mock provider investigation'}[t?.mode];
+  n.append(el('h2',heading || 'Offline investigation','rail-heading'));
   if (!t) { n.append(el('p', 'No saved investigation is open.', 'rail-sub')); return; }
   const results = t.results || [];
   const zero = t.status === 'COMPLETED' && t.reason === 'ZERO_CANDIDATES';
@@ -458,7 +479,7 @@ function renderCompleted(n, t) {
   }
   const headCount = [...seen.values()].reduce((sum, rows) => sum + ([...rows.values()][0]?.side === 'head' ? rows.size : 0), 0);
   const metrics = el('div','','metrics');
-  for (const [value, title] of [[0,'Model requests'],
+  for (const [value, title] of [[(t.requests || []).length,'Model requests'],
     [results.filter(r => r.tool === 'read_source').length,'Source reads'],[headCount,'HEAD lines']]) {
     const d = el('div'); d.append(el('strong',String(value)),el('span',title)); metrics.append(d);
   }
@@ -540,7 +561,7 @@ function candidateStatus(t, c) {
   const d = state.human?.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
   const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
   const blocked = check && check.status !== 'NEW' ? check.status : null;
-  return d ? readStatus(d) : blocked || 'NOT DRAFTED';
+  return blocked || (d ? readStatus(d) : 'NOT DRAFTED');
 }
 function renderEditor(n,t,c,d) {
   const ctx = current();
@@ -665,30 +686,41 @@ function renderHuman(n,t) {
     return;
   }
   const c = candidate(), mock = owns(state.human);
-  n.append(el('p', mock ? 'Owned fixture · Deterministic candidate · Simulated GitHub' : 'Human confirmation · Frozen task','rail-sub'));
   if (c) {
+    const check = (state.human.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === c.id);
+    const blocked = check && check.status !== 'NEW';
     const meta = el('p'); meta.append(tag('CONDITIONAL','accent'),'  ' + t.candidates.length + ' candidate' + (t.candidates.length === 1 ? '' : 's')); n.append(meta);
     if (t.candidates.length > 1) {
       const list = block(n,'Candidates');
-      for (const row of t.candidates) list.append(currentAttr(card(row.title,name(row.change.path) + ':' + row.change.line + ' · ' + candidateStatus(t,row),() => pickCandidate(t,row)), row === c));
+      for (const row of t.candidates) {
+        const item = card(row.title,name(row.change.path) + ':' + row.change.line + ' · ' + candidateStatus(t,row),() => pickCandidate(t,row));
+        item.append(el('small', reviewLabels(t).map(label => label.textContent).join(' · ')));
+        list.append(currentAttr(item, row === c));
+      }
     }
     const impact = c.impact.split(/(?<=\.)\s+/)[0];
-    n.append(el('h3',c.title,'candidate-title'),el('p','If ' + c.trigger.replace(/^If\s+/,'').replace(/\.$/,'') + ', ' + impact.charAt(0).toLowerCase() + impact.slice(1),'rail-sub'));
+    const provenance = el('p', '', 'candidate-provenance');
+    const [source, writeback] = reviewLabels(t);
+    provenance.append(source, ' ', writeback);
+    n.append(el('h3',c.title,'candidate-title'),provenance,el('p','If ' + c.trigger.replace(/^If\s+/,'').replace(/\.$/,'') + ', ' + impact.charAt(0).toLowerCase() + impact.slice(1),'rail-sub'));
     block(n,'Citation valid · Semantics unadjudicated', el('p','The changed line and collected source match this frozen revision. Runtime reachability and defect status are unconfirmed.','rail-sub'));
     const d = currentDraft();
-    if (!d) {
+    if (blocked) {
+      n.append(el('p',check.reason,'rail-sub'));
+    }
+    if (!d && !blocked) {
       n.append(card('Select candidate',name(c.change.path) + ':' + c.change.line + ' · changed ' + anchors[c.change.side] + ' line', () => act(async () => {
         await human('draft',{review_id:state.human.id,task_id:t.id,candidate_id:c.id});
         await refreshHuman(); renderRail(true); locate(t,c.change,true);
       }), 'select-candidate'));
       n.append(el('p','Select the candidate to create a draft. Follow the source anchor and use Back to review to edit the comment.','rail-sub'));
-    } else {
+    } else if (d) {
       const evidence = block(n,'Frozen evidence',locationCard(c.change,t,'Changed line',name(c.change.path) + ':' + c.change.line + ' · ' + anchors[c.change.side],true));
       for (const e of c.citations.filter(e => e.path !== c.change.path || e.line !== c.change.line || e.side !== c.change.side)) {
         evidence.append(locationCard(e,t,'Caller evidence',name(e.path) + ':' + e.line + ' · ' + sides[e.side]));
       }
       evidence.append(lazy('Exact citation data',() => [pre(c.citations)]));
-      renderEditor(n,t,c,d);
+      if (!blocked || d.intent_id) renderEditor(n,t,c,d);
     }
   } else n.append(el('p','This frozen version has no accepted candidate. No comment was created.','rail-sub'));
   renderRereview(n,t);
@@ -726,6 +758,7 @@ function renderRereview(n,t) {
   const section = block(n,'Incremental re-review');
   section.id = 'rereview-status';
   section.append(el('p',check.relation + ' · ' + short(check.old_head) + ' → ' + short(check.new_head),'mono'));
+  if (check.lineage === 'UNKNOWN') section.append(el('p','Legacy re-review. Head-side file lineage is unknown.','rail-sub'));
   for (const row of check.comments) {
     const where = row.old.path + ':' + row.old.line + ' ' + row.old.side;
     const now = row.new ? ' → ' + row.new.path + ':' + row.new.line : '';

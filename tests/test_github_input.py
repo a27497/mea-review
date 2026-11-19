@@ -428,6 +428,29 @@ class GithubInputTests(unittest.TestCase):
         self.assertEqual(sum(1 for g in report['gaps'] if g['code'] == 'HTTP_503'), 1)
         self.assertEqual(sum(1 for path, _ in fetcher.calls if path == tree), 1)
 
+    def test_tree_read_for_a_null_sha_is_classified_without_context_selection(self):
+        row = fx.Fetcher().files()[0]
+        tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
+        entries = [e for e in fx.Fetcher().routes()[tree]['tree'] if e['path'] != 'shop/pricing.py']
+        cases = {
+            'unavailable': (Response(404, b'{}'), (MISSING, 'TREE_HTTP_404', 'tree')),
+            'truncated': (dict(tree=entries, truncated=True), (TRUNCATED, 'PROVIDER_TREE_TRUNCATED', 'tree')),
+        }
+        for name, (answer, gap) in cases.items():
+            with self.subTest(name):
+                # --context-files 0: context selection does not run, the tree is read only for the null sha.
+                report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: answer}),
+                                           context_limit=0, now=0)
+                self.assert_context(snapshot, 'INCOMPLETE', 'NOT_REQUESTED', [gap])
+                self.assertEqual(snapshot['files'][0]['sides']['head']['text'], fx.HEAD_FILES['shop/pricing.py'])
+                # With context selection the same gap is reported once and the selection lists it.
+                report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)], overrides={tree: answer}), now=0)
+                self.assertEqual(sum(1 for g in report['gaps'] if g['code'] == gap[1]), 1)
+                self.assertIn(gap[1], [g['code'] for g in report['context_selection']['gaps']])
+        # Boundary: a usable tree that lists the path keeps a context-free capture COMPLETE.
+        report, snapshot = capture(REF, fx.Fetcher(compare_files=[dict(row, sha=None)]), context_limit=0, now=0)
+        self.assert_context(snapshot, 'COMPLETE', 'NOT_REQUESTED', [])
+
     def test_c2_tree_blob_size_invalid_absent_and_present(self):
         tree = f'{BASE}/git/trees/{fx.HEAD}?recursive=1'
         entries = fx.Fetcher().routes()[tree]['tree']

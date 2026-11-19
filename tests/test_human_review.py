@@ -39,6 +39,27 @@ class HumanReviewTests(unittest.TestCase):
                     f=next(f for f in t['view']['files'] if f['path']==e['path']);self.assertEqual(f['sides'][e['side']]['text'].splitlines()[e['line']-1],e['quote'])
         self.assertEqual(self.tasks[3]['reason'],'ZERO_CANDIDATES');self.assertEqual(self.tasks[3]['candidates'],[])
 
+    def test_candidate_source_is_independent_of_mock_writeback(self):
+        real=copy.deepcopy(self.t)
+        real['mode']='REAL_PROVIDER_DEEPSEEK'
+        real['provider']='DEEPSEEK_API'
+        real['identity']['mode']=real['mode']
+        key=digest(real['identity'])
+        real['id']='task-'+key
+        with self.store.transaction() as db:
+            db.execute('INSERT INTO tasks VALUES (?, ?, ?)',(real['id'],key,canonical(real).decode()))
+
+        for task in (self.t,real):
+            with self.subTest(mode=task['mode']):
+                self.assertTrue(demo.registered(task))
+                review=self.s.create(task['id'])
+                version=review['versions'][0]
+                self.assertEqual(version['candidate_source'],task['mode'])
+                self.assertEqual(version['writeback_mode'],'MOCK_GITHUB_NOT_LIVE')
+                draft=self.s.draft(review['id'],task['id'],task['candidates'][0]['id'])
+                self.assertEqual(draft['source_kind'],task['mode'])
+                self.assertEqual(self.s.preview(draft['id'])['mode'],'MOCK_GITHUB_NOT_LIVE')
+
     def test_exact_github_payload_and_explicit_full_confirmation(self):
         p=self.s.preview(self.d['id']);self.assertEqual(set(p['payload']),{'commit_id','path','line','side','body'})
         self.assertEqual((p['payload']['line'],p['payload']['side'],p['payload']['path']),(2,'RIGHT','quota.py'))

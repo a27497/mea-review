@@ -13,7 +13,9 @@ Upstream font projects are [Inter](https://github.com/rsms/inter) and
 
 Browser test dependencies are installed from the pinned npm lockfile.
 Playwright 1.56.1 is Apache-2.0. Its optional macOS dependency fsevents
-2.3.2 is MIT. Neither dependency nor the browser binaries are bundled here.
+2.3.2 is MIT. The MCP interoperability check uses the official TypeScript SDK
+(`@modelcontextprotocol/sdk` 1.32.2, MIT) as a development dependency. Package
+dependencies and browser binaries are downloaded separately.
 
 The workbench examples are synthetic MEA project fixtures. The separate
 ReviewBench replay also includes two frozen external PR snapshots used as

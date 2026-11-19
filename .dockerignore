@@ -1,0 +1,7 @@
+*
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!mea/
+!web/
+!fixtures/
+**/__pycache__

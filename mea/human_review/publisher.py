@@ -121,7 +121,9 @@ class Publisher:
     @staticmethod
     def keep_history(d):
         # A release must always be possible. At the history bound the oldest entry is dropped;
-        # the released intent itself keeps its full record and events.
+        # the released intent itself keeps its full record and events. The next edit may then
+        # correct the body or anchor once more (Service.edit), still followed by a new preview
+        # and confirmation.
         if len(d['history'])>=16:d['history']=d['history'][-15:]
         d['history'].append({k:copy.deepcopy(d[k]) for k in ['revision','body','anchor','confirmation','status']})
 

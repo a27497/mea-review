@@ -25,6 +25,7 @@ def load(label):
 
 
 def registered(task):
+    """Match a fixture for Mock transport eligibility, independent of the candidate producer."""
     row=next((r for r in versions() if task['identity']['input_sha256']==r['input_sha256']),None)
     return bool(row and digest(task['view'])==View.from_input(load(row['label'])).sha256)
 

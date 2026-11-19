@@ -5,6 +5,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium, expect} from '@playwright/test';
+import {checkReviewProvenance} from './review-provenance-check.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = process.env.MEA_E2E_OUT ||
@@ -238,6 +239,8 @@ try {
   await page.screenshot({path: evidence('mock-provider-mobile.png'), fullPage: true});
   checks.push('Provider rehearsal stays disabled until the separate Mock worker and explicit confirmation are present.');
   checks.push('The owned sample completes four simulated requests and exports three frozen tool results.');
+  await checkReviewProvenance(page, base, root, evidence('task-db'));
+  checks.push('Opening saved Real and deterministic Mock candidates shows the candidate source separately from Mock writeback.');
 
   assert.deepEqual(external, []);
   assert.deepEqual(errors, []);

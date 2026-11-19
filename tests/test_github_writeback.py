@@ -828,12 +828,18 @@ class WritebackTests(unittest.TestCase):
     # ---- M5: lineage that cannot be re-established ---------------------------------------------
 
     def test_omitted_rename_blocks_later_linked_versions_with_incomplete_listings(self):
-        self.assert_omitted_rename_blocks_later_versions(complete=False)
+        self.assert_omitted_rename_blocks_later_versions(False, False)
 
     def test_omitted_rename_blocks_later_linked_versions_with_complete_listings(self):
-        self.assert_omitted_rename_blocks_later_versions(complete=True)
+        self.assert_omitted_rename_blocks_later_versions(True, True)
 
-    def assert_omitted_rename_blocks_later_versions(self, complete):
+    def test_omitted_rename_blocks_later_linked_versions_with_partial_then_complete_listing(self):
+        self.assert_omitted_rename_blocks_later_versions(False, True)
+
+    def test_omitted_rename_blocks_later_linked_versions_with_complete_then_partial_listing(self):
+        self.assert_omitted_rename_blocks_later_versions(True, False)
+
+    def assert_omitted_rename_blocks_later_versions(self, complete_v3, complete_v4):
         self.sent()
         rid = self.r['id']
         local = Service(self.store)
@@ -842,8 +848,8 @@ class WritebackTests(unittest.TestCase):
         # complete, but see only the new name, with no link over the missing step.
         increments = [
             (H1, H2, BASE, V1, 'independent.py', False),
-            (H2, H3, V1, V2_REPLACE, 'renamed_quota.py', complete),
-            (H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'renamed_quota.py', complete),
+            (H2, H3, V1, V2_REPLACE, 'renamed_quota.py', complete_v3),
+            (H3, h4, V2_REPLACE, V3_REPLACE_AGAIN, 'renamed_quota.py', complete_v4),
         ]
         pending = []
         for base, head, before, after, path, complete in increments:
@@ -953,8 +959,81 @@ class WritebackTests(unittest.TestCase):
         self.assertEqual((code, 'REREVIEW_LEGACY_LINEAGE_UNKNOWN' in printed), (2, True))
         self.assertEqual(self.posts(), 1)
 
+    def legacy_increment_chain(self):
+        local = Service(self.store)
+        rid = self.r['id']
+        tasks = []
+        for base, head, before, after in [(H1, H2, BASE, V1), (H2, H3, V1, V2_REPLACE)]:
+            value = snapshot(base, head, before, after, 'legacy-chain-' + head[0])
+            value['files'][0].update(path='independent.py', base_path='independent.py')
+            caller = side(CALLER.replace('from quota', 'from independent'))
+            value['files'][1]['sides'] = dict(base=caller, head=caller)
+            task = offline_task(self.store, value)
+            self.assertEqual([c['change']['path'] for c in task['candidates']], ['independent.py'])
+            local.increment(rid, task['id'])
+            tasks.append(task)
+        t2, t3 = tasks
+        cid = t3['candidates'][0]['id']
+        draft = local.draft(rid, t3['id'], cid)
+        local.rereview(rid, t2['id'])
+        with self.store.transaction() as db:
+            review = get(db, rid, 'review')
+            review['rereviews'][0].pop('lineage_rule')
+            db.execute('update human_records set doc=? where id=?', (json.dumps(review), rid))
+        return local, t3['id'], cid, draft['id']
+
+    def test_comment_free_legacy_result_allows_linked_and_completed_rereview_drafts(self):
+        local, task_id, cid, draft_id = self.legacy_increment_chain()
+        rid = self.r['id']
+        opened = local.open(rid)
+        self.assertEqual(opened['sends'], [])
+        self.assertEqual(opened['rereviews'][0]['comments'], [])
+        self.assertNotIn('lineage', opened['rereviews'][0])
+        self.assertEqual(local.draft(rid, task_id, cid)['id'], draft_id)
+        self.assertEqual(local.preview(draft_id)['payload']['commit_id'], H3)
+        check = local.rereview(rid, task_id)['rereviews'][-1]
+        self.assertEqual((check['relation'], check['candidates'][0]['status']), ('INCREMENTAL_LINEAR', 'NEW'))
+        self.assertEqual(local.draft(rid, task_id, cid)['id'], draft_id)
+        self.assertEqual(local.preview(draft_id)['payload']['commit_id'], H3)
+
+    def test_legacy_anchor_refusal_is_visible_on_linked_and_completed_rereviews(self):
+        self.sent()
+        local, task_id, cid, draft_id = self.legacy_increment_chain()
+        rid = self.r['id']
+        error = 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION'
+        for completed in (False, True):
+            with self.subTest(completed=completed):
+                opened = local.rereview(rid, task_id) if completed else local.open(rid)
+                with self.assertRaisesRegex(ValueError, error):
+                    local.draft(rid, task_id, cid)
+                with self.assertRaisesRegex(ValueError, error):
+                    local.preview(draft_id)
+                if completed:
+                    check = opened['rereviews'][-1]
+                    self.assertEqual(check['candidates'][0]['status'], 'LINEAGE_UNKNOWN')
+                    self.assertEqual((check['lineage'], check['comments'][0]['status']), ('UNKNOWN', 'CURRENT'))
+                block = opened['versions'][-1].get('head_draft_block', {})
+                self.assertEqual((block.get('status'), block.get('error')), ('LINEAGE_UNKNOWN', error))
+        with self.store.connection() as db:
+            self.assertEqual(get(db, rid, 'review')['rereviews'][-1]['candidates'][0]['status'], 'NEW')
+
 
 class AnchorMappingTests(unittest.TestCase):
+    def test_legacy_block_only_counts_comments_or_intents_that_may_have_crossed_the_step(self):
+        versions = [dict(task_id=task, revisions=dict(head=head)) for task, head in [('t1', H1), ('t2', H2), ('t3', H1)]]
+        old = dict(new_task_id='t2', comments=[])
+        review = dict(versions=versions, rereviews=[old])
+        for status, blocked in [('PUBLISHED', True), ('SENDING', True), ('UNCERTAIN', True), ('RELEASED_AFTER_RECONCILE', True),
+                                ('PREPARED', False), ('NOT_SENT', False), ('ABANDONED_NEVER_SENT', False)]:
+            with self.subTest(status=status):
+                intent = dict(id='send-1', status=status, payload=dict(commit_id=H1), approved_snapshot=dict(task_id='t1'))
+                self.assertEqual(list(rereview.head_draft_blocks(review, [intent])), ['t2', 't3'] if blocked else [])
+                # A send on a later task reusing the same head cannot have crossed the legacy step.
+                intent['approved_snapshot']['task_id'] = 't3'
+                self.assertEqual(rereview.head_draft_blocks(review, [intent]), {})
+        old['comments'] = [dict(send_id='missing-send-record', old=dict(commit_id=H1))]
+        self.assertEqual(list(rereview.head_draft_blocks(review, [])), ['t2', 't3'])
+
     def test_line_mapping_through_hunks(self):
         patch_text = diff('a\nb\nc\nd\ne\nf\n', 'x\na\nb\nC\nd\nf\n')
         self.assertEqual(rereview.map_line(patch_text, 1), ('CURRENT', 2, None))

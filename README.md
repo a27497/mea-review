@@ -56,7 +56,7 @@ Compose stores drafts and tasks in temporary container storage. Use `docker comp
 
 Capture may be incomplete. The workbench keeps missing, truncated and unavailable evidence visible. An increment can establish that an original comment anchor is outdated without moving the comment. If an incomplete increment leaves the file's lineage unknown, later use of the same name does not establish continuity. [Capture and re-review limits](docs/OPERATING_GUIDE.md)
 
-- **Pre-M5 review workspaces.** The workbench treats every saved re-review without a `lineage_rule` as `UNKNOWN`. It blocks head-side `draft` and `preview` in later versions, even after a complete re-review and even if the workspace has never published a comment. The candidate may still display `NEW`. Start a new review workspace from the current frozen snapshot.
+Pre-M5 workspaces with no sent or possibly sent comment anchor can continue re-reviewing frozen versions. If such an anchor crossed a legacy increment with no `lineage_rule`, the workbench shows unknown lineage and blocks head-side drafting and preview from that increment onward.
 
 ## Read-only MCP
 

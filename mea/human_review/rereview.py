@@ -12,8 +12,8 @@ incomplete listing or a non-linear step leaves the file's path lineage unknown (
 rename may have been omitted), no head-side candidate can be drafted in that or any
 later version of the review. A later listing that names the last known path does not
 end this: the name may now belong to another file, and no frozen input records the
-file's identity across the step that was not listed. A stored result written before
-this rule (no lineage_rule) has unknown lineage for head-side drafting.
+file's identity across the step that was not listed. A result without the lineage
+rule has unknown lineage when a sent or possibly sent anchor crossed the legacy step.
 """
 import re
 
@@ -25,6 +25,8 @@ LINEAGE_RULE = 'm5-unknown-lineage-sticky-v1'
 LEGACY_REASON = 'Carried from a re-review stored before the path lineage rule; the file holding the replacement lines is unknown.'
 UNLISTED_ANCHOR = 'Increment file listing is incomplete; absence does not prove the file is unchanged.'
 SENT = {'PUBLISHED', 'PUBLISHED_RECONCILED', 'MOCK_PUBLISHED', 'MOCK_PUBLISHED_RECONCILED'}
+# Releasing an uncertain intent after reconciliation is evidence of absence, not proof.
+POSSIBLY_SENT = SENT | {'SENDING', 'UNCERTAIN', 'RELEASED_AFTER_RECONCILE'}
 
 
 def hunks(patch):
@@ -120,10 +122,49 @@ def unresolved_location(row):
 
 
 def unknown_lineage(result):
-    return legacy(result) or any(
+    return any(
         marker.get('lineage') != 'KNOWN'
         for row in result['comments'] if (marker := unresolved_location(row))
     )
+
+
+def head_draft_blocks(review, sends):
+    """Return head-side refusals by version, including versions only linked so far."""
+    checks = {check['new_task_id']: check for check in review.get('rereviews', [])}
+    anchor_tasks = set()
+    anchor_heads = set()
+    for send in sends:
+        if send['status'] in POSSIBLY_SENT:
+            task_id = send.get('approved_snapshot', {}).get('task_id')
+            if task_id:
+                anchor_tasks.add(task_id)
+            else:
+                anchor_heads.add(send['payload']['commit_id'])
+    journal_ids = {send['id'] for send in sends}
+    anchor_heads.update(row['old']['commit_id'] for check in checks.values()
+                        for row in check['comments'] if row['send_id'] not in journal_ids)
+    blocks = {}
+    earlier_anchor = unknown = False
+    last = None
+    for version in review['versions']:
+        task_id = version['task_id']
+        check = checks.get(task_id)
+        # An anchor sent on this head has not crossed the step that led to it.
+        legacy_risk = check and legacy(check) and earlier_anchor
+        if check:
+            unknown = unknown or legacy_risk or unknown_lineage(check)
+            last = check
+        if unknown:
+            blocks[task_id] = dict(
+                status='LINEAGE_UNKNOWN',
+                error='REREVIEW_LEGACY_LINEAGE_UNKNOWN' if legacy_risk else 'REREVIEW_AT_OUTDATED_COMMENT_LOCATION',
+                reason='An earlier sent or possibly sent comment anchor has unknown file lineage. Head-side drafting and preview are blocked.')
+        elif not check and last and any(unresolved_location(row) for row in last['comments']):
+            blocks[task_id] = dict(
+                status='AT_OUTDATED_COMMENT_LOCATION', error='REREVIEW_AT_OUTDATED_COMMENT_LOCATION',
+                reason='An earlier comment location is unresolved. Head-side drafting and preview require a re-review of this version.')
+        earlier_anchor = earlier_anchor or task_id in anchor_tasks or version['revisions']['head'] in anchor_heads
+    return blocks
 
 
 def carry_unresolved(marker, linked, nv, complete):

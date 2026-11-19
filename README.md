@@ -38,7 +38,7 @@ From a clean clone with Docker and Compose installed:
 docker compose up --build
 ```
 
-Open [the local workbench](http://127.0.0.1:8810). The **PR Inbox** lists saved investigations and human reviews. Choose **Import snapshot** to open the classic task controls or **Demo guide** to load a synthetic example. The demo uses frozen snapshots, deterministic investigations and simulated GitHub. It needs no credentials. [Container settings](compose.yaml)
+Open [the local workbench](http://127.0.0.1:8810). The **PR Inbox** lists saved investigations and human reviews. Use **Overview** beside a saved record to inspect the frozen version, evidence coverage and candidate relationships. Use the header language control to switch between English and Simplified Chinese. Choose **Import snapshot** to open the classic task controls or **Demo guide** to load a synthetic example. The demo uses frozen snapshots, deterministic investigations and simulated GitHub. It needs no credentials. [Container settings](compose.yaml)
 
 - **Completed** opens an investigation. Expand the tool trace and select a citation to see its original side, revision and line.
 - **Human review** opens a Mock candidate. Inspect its frozen evidence and save a local judgment. To post a Mock comment, create a draft, preview and confirm the exact comment, then choose **Send to Mock**. Use **Reconcile read-only** if an outcome is uncertain.
@@ -99,6 +99,7 @@ npm test
 node scripts/mcp-roundtrip.mjs
 npm run test:e2e
 npm run test:review-v3
+npm run test:review-overview
 python3 -I -B benchmarks/reviewbench/verify.py --out artifacts/reviewbench-offline-1
 ```
 

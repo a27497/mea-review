@@ -20,3 +20,8 @@ button:disabled{opacity:.6;cursor:wait}.source-row{display:block;white-space:pre
 #task-results details, .task-candidate { margin:12px 0; padding:12px; border:1px solid #d6dfe5; border-radius:8px; }
 #task-results summary { cursor:pointer; overflow-wrap:anywhere; }
 #task-message, #task-progress, #task-goal-display, #task-limits { overflow-wrap:anywhere; }
+#language-toggle{margin-left:auto;flex:none}
+@media(max-width:560px){
+  body>header{flex-wrap:wrap;gap:10px}
+  #language-toggle{min-height:44px}
+}

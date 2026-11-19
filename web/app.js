@@ -1,9 +1,11 @@
+import {diagnostic, m, mountLanguage, setText} from './i18n.js';
+
 const $ = id => document.getElementById(id);
 let snapshot, snapshotText, report, sourceFile, sourceRevisions, patchLine, busy = false;
 
 function node(tag, text, className) {
   const el = document.createElement(tag);
-  el.textContent = text;
+  setText(el, text);
   if (className) el.className = className;
   return el;
 }
@@ -23,7 +25,7 @@ async function request(url, data, raw = false) {
 
 function sourceLink(view, e) {
   const diffLine = e.binding.patch_line;
-  const label = diffLine ? 'Open patch at row ' + diffLine : 'Open frozen source at line ' + e.start;
+  const label = diffLine ? m('Open patch at row {line}', {line: diffLine}) : m('Open frozen source at line {line}', {line: e.start});
   const button = node('button', label);
   button.addEventListener('click', async () => {
     try {
@@ -43,7 +45,7 @@ function sourceLink(view, e) {
       }
       throw new Error('Source does not match the citation.');
     } catch (error) {
-      $('status').textContent = 'Citation unavailable · ' + error.message;
+      setText($('status'), m('Citation unavailable · {error}', {error: diagnostic(error.message)}));
     }
   });
   return button;
@@ -74,14 +76,14 @@ function cards(target, rows, finding) {
     $(target).append(button);
   }
   if (!rows.length) {
-    $(target).append(node('p', finding ? 'No candidates from these rules. Human review is still required.' :
-      'No parsed change observations available.', 'muted'));
+    $(target).append(node('p', finding ? m('No candidates from these rules. Human review is still required.') :
+      m('No parsed change observations available.'), 'muted'));
   }
 }
 
 function render() {
   $('mode-badge').textContent = report.mode;
-  $('mode-notice').textContent = report.notice;
+  setText($('mode-notice'), diagnostic(report.notice));
   $('workspace').hidden = false;
   $('title').textContent = report.pr.title;
   $('identity').textContent = report.pr.repository + ' #' + report.pr.number + ' · ' +
@@ -94,7 +96,7 @@ function render() {
 }
 
 async function run(data) {
-  $('status').textContent = 'Reviewing bounded supplied text…';
+  setText($('status'), m('Reviewing bounded supplied text…'));
   const result = await (await request('/api/review', data, true)).json();
   snapshotText = typeof data === 'string' ? data : new TextDecoder('utf-8', {fatal: true}).decode(data);
   snapshot = JSON.parse(snapshotText);
@@ -105,8 +107,7 @@ async function run(data) {
   $('evidence-help').hidden = false;
   $('priority').value = 'all';
   render();
-  $('status').textContent = report.findings.length + ' findings · ' + report.observations.length +
-    ' change observations · Human review required';
+  setText($('status'), m('{findings} findings · {observations} change observations · Human review required', {findings: report.findings.length, observations: report.observations.length}));
 }
 
 function action(fn) {
@@ -117,7 +118,7 @@ function action(fn) {
     try {
       await fn();
     } catch (error) {
-      $('status').textContent = 'Failed · ' + error.message;
+      setText($('status'), m('Failed · {error}', {error: diagnostic(error.message)}));
     } finally {
       busy = false;
       syncTaskControls();
@@ -175,21 +176,24 @@ function sourceLines(text) {
   return rows;
 }
 
+function frozenSourceNote(source, line, count) {
+  const identity = m('Frozen blob {blob} · SHA-256 {hash}', {blob: source.blob_sha, hash: source.sha256});
+  return line >= 1 && line <= count ? identity : m('{source} · Line outside this source', {source: identity});
+}
+
 function renderSource() {
   const side = $('source-side').value;
   const line = Number($('source-line').value);
   const source = sourceFile.sides[side];
-  $('source-title').textContent = (side === 'base' ? sourceFile.base_path : sourceFile.path) +
-    ' · ' + side.toUpperCase() + ' · ' + sourceRevisions[side];
+  setText($('source-title'), (side === 'base' ? sourceFile.base_path : sourceFile.path) +
+    ' · ' + side.toUpperCase() + ' · ' + sourceRevisions[side]);
   const lines = source ? sourceLines(source.text) : [];
   $('source-text').replaceChildren(...lines.map((row, i) =>
     node('span', (i + 1) + '  ' + row, 'source-row' + (i + 1 === line ? ' located' : ''))));
-  $('source-note').textContent = source ?
-    'Frozen blob ' + source.blob_sha + ' · SHA-256 ' + source.sha256 +
-      (line >= 1 && line <= lines.length ? '' : ' · Line outside this source') :
-    'Source unavailable on this side. The supplied patch only shows changed context.';
-  $('source-diff').replaceChildren(...sourceLines(sourceFile.patch || 'No supplied text diff.').map((row, i) =>
-    node('span', (i + 1) + '  ' + row, 'source-row' + (i + 1 === patchLine ? ' located' : ''))));
+  setText($('source-note'), source ? frozenSourceNote(source, line, lines.length)
+    : m('Source unavailable on this side. The supplied patch only shows changed context.'));
+  $('source-diff').replaceChildren(...sourceFile.patch ? sourceLines(sourceFile.patch).map((row, i) =>
+    node('span', (i + 1) + '  ' + row, 'source-row' + (i + 1 === patchLine ? ' located' : ''))) : [node('span', m('1  No supplied text diff.'), 'source-row')]);
   if (patchLine) $('source-diff').parentElement.open = true;
 }
 
@@ -199,7 +203,7 @@ $('go-line').addEventListener('click', () => {
 });
 
 function taskSourceLink(savedTask, e) {
-  const button = node('button', 'Open frozen source at ' + e.path + ':' + e.line);
+  const button = node('button', m('Open frozen source at {anchor}', {anchor: e.path + ':' + e.line}));
   button.addEventListener('click', async () => {
     try {
       const stored = await (await request('/api/task-json/' + encodeURIComponent(savedTask.id))).json();
@@ -212,7 +216,7 @@ function taskSourceLink(savedTask, e) {
       }
       showSource(file, stored.view.revisions, e.side, e.line);
     } catch (error) {
-      $('task-message').textContent = 'Source unavailable · ' + error.message;
+      setText($('task-message'), m('Source unavailable · {error}', {error: diagnostic(error.message)}));
     }
   });
   return button;
@@ -230,10 +234,10 @@ function syncTaskControls() {
 async function refreshTasks() {
   const previous = $('task-saved').value;
   const rows = await (await request('/api/tasks')).json();
-  $('task-saved').replaceChildren(node('option', 'Choose a saved task'));
+  $('task-saved').replaceChildren(node('option', m('Choose a saved task')));
   $('task-saved').firstChild.value = '';
   for (const t of rows) {
-    const option = node('option', `${t.mode} · ${t.pr.repository} #${t.pr.number} · ${t.status} · ${t.goal}`);
+    const option = node('option', m('{mode} · {pr} · {status} · {goal}', {mode: diagnostic(t.mode), pr: t.pr.repository + ' #' + t.pr.number, status: diagnostic(t.status), goal: t.goal}));
     option.value = t.id; $('task-saved').append(option);
   }
   $('task-saved').value = previous;
@@ -241,8 +245,12 @@ async function refreshTasks() {
 function renderTask(t) {
   task = t; $('task-detail').hidden = false;
   $('task-title').textContent = `${t.mode} · ${t.pr.repository} #${t.pr.number}`;
-  $('task-progress').textContent = `${t.status} · ${t.reason || 'Investigation in progress'} · decisions ${t.usage.rounds}/${t.budget.rounds} · tools ${t.usage.tools}/${t.budget.tools} · output ${t.usage.output_bytes}/${t.budget.output_bytes} bytes`;
-  $('task-goal-display').textContent = 'Objective: '+t.goal;
+  setText($('task-progress'), m('{status} · {reason} · decisions {rounds}/{roundBudget} · tools {tools}/{toolBudget} · output {bytes}/{byteBudget} bytes', {
+    status: diagnostic(t.status), reason: diagnostic(t.reason) || m('Investigation in progress'),
+    rounds: t.usage.rounds, roundBudget: t.budget.rounds, tools: t.usage.tools, toolBudget: t.budget.tools,
+    bytes: t.usage.output_bytes, byteBudget: t.budget.output_bytes,
+  }));
+  setText($('task-goal-display'), m('Objective: {goal}', {goal: t.goal}));
   $('task-identity').textContent = JSON.stringify({id:t.id,identity:t.identity,budget:t.budget,provider:t.provider},null,2);
   const visibleEvents=t.events.filter(e=>e.kind!=='decision_started'&&e.kind!=='tool_started'&&!(e.kind==='decision'&&e.decision.kind==='finish'));
   $('task-events').replaceChildren(...visibleEvents.map(e => {
@@ -250,10 +258,10 @@ function renderTask(t) {
     if (e.decision?.tool) {
       const nextDecision=t.events.find(n=>n.kind==='decision'&&n.seq>e.seq);
       const executed=t.events.some(n=>n.kind==='tool_started'&&n.seq>e.seq&&(!nextDecision||n.seq<nextDecision.seq));
-      item.append(node('pre', `${executed ? 'Executed' : 'Selected (not started)'} ${e.decision.tool} ${JSON.stringify(e.decision.args)}`));
+      item.append(node('pre', m(executed ? 'Executed {tool} {args}' : 'Selected (not started) {tool} {args}', {tool: e.decision.tool, args: JSON.stringify(e.decision.args)})));
     }
     if(e.kind==='tool_result') {
-      const r=t.results[e.result_index];item.append(node('span', ` ${r.tool}: ${r.evidence.length} source references; ${r.unknown.join(', ') || 'collected scope only'}.`));
+      const r=t.results[e.result_index];item.append(node('span', m(' {tool}: {count} source references; {unknown}.', {tool: r.tool, count: r.evidence.length, unknown: r.unknown.join(', ') || m('collected scope only')})));
     }
     return item;
   }));
@@ -261,23 +269,23 @@ function renderTask(t) {
   const opened = new Set([...$('task-results').querySelectorAll('details[open]')].map(e => e.dataset.index));
   $('task-results').replaceChildren(...t.results.map((r,i) => {
     const detail = node('details',''); detail.dataset.index=String(i); detail.open=opened.has(String(i));
-    detail.append(node('summary', `${i+1}. ${r.tool} · ${r.evidence.length} references · ${r.coverage}${r.truncated ? ' · TRUNCATED' : ''}`));
+    detail.append(node('summary', m('{number}. {tool} · {count} references · {coverage}{truncation}', {number: i + 1, tool: r.tool, count: r.evidence.length, coverage: r.coverage, truncation: r.truncated ? m(' · {status}', {status: diagnostic('TRUNCATED')}) : ''})));
     detail.append(node('p', `${r.revision} · Content SHA-256 ${r.content_sha256}`, 'mono'));
-    detail.append(node('p', `Unknown: ${r.unknown.join(', ') || 'No additional omission in this bounded response'}. ${r.notice}`));
+    detail.append(node('p', m('Unknown: {unknown}. {notice}', {unknown: r.unknown.join(', ') || m('No additional omission in this bounded response'), notice: r.notice})));
     detail.append(node('pre', typeof r.data === 'string' ? r.data : JSON.stringify(r.data,null,2)));
     for (const e of r.evidence) detail.append(taskSourceLink(t, e), node('pre', `${e.path}:${e.line} · ${e.side} · ${e.revision}\n${e.quote}\n${e.id}\nSource SHA-256 ${e.content_sha256} · blob ${e.blob_sha}`));
     return detail;
   }));
   $('task-candidates').replaceChildren(...t.candidates.map(c => {
     const article=node('article','','task-candidate');
-    article.append(node('h4',c.title),node('p','Trigger: '+c.trigger),node('p','Change: '+JSON.stringify(c.change)),node('p','Impact: '+c.impact),node('p',`Citation validation: ${c.citation_validity} · ${c.inference} · correctness ${c.correctness}`));
+    article.append(node('h4',c.title),node('p',m('Trigger: {trigger}', {trigger: c.trigger})),node('p',m('Change: {change}', {change: JSON.stringify(c.change)})),node('p',m('Impact: {impact}', {impact: c.impact})),node('p',m('Citation validation: {status} · {inference} · correctness {correctness}', {status: diagnostic(c.citation_validity), inference: diagnostic(c.inference), correctness: diagnostic(c.correctness)})));
     for (const e of c.citations) article.append(taskSourceLink(t, e), node('pre',`${e.path}:${e.line} · ${e.side} · ${e.revision}\n${e.quote}\n${e.id}`));
     return article;
   }));
-  if (!t.candidates.length) $('task-candidates').append(node('p', 'No accepted candidates. Evidence may be insufficient or the hypothesis withdrawn. This is not approval.'));
-  if (t.rejected.length) $('task-candidates').append(node('p',`${t.rejected.length} rejected candidate(s): deterministic reference, version, change or duplicate validation failed.`));
-  $('task-limits').textContent = `Stop reason: ${t.reason || 'Not stopped'}. ${t.notice} No model called; no calibrated confidence or correctness score.`;
-  $('task-message').textContent = `Saved automatically · ${t.id}`;
+  if (!t.candidates.length) $('task-candidates').append(node('p', m('No accepted candidates. Evidence may be insufficient or the hypothesis withdrawn. This is not approval.')));
+  if (t.rejected.length) $('task-candidates').append(node('p',m('{count} rejected candidate(s): deterministic reference, version, change or duplicate validation failed.', {count: t.rejected.length})));
+  setText($('task-limits'), m('Stop reason: {reason}. {notice} No model called; no calibrated confidence or correctness score.', {reason: diagnostic(t.reason) || m('Not stopped'), notice: t.notice}));
+  setText($('task-message'), m('Saved automatically · {id}', {id: t.id}));
   syncTaskControls();
 }
 async function watchTask(id) {
@@ -288,7 +296,7 @@ async function watchTask(id) {
     renderTask(t);
     if(!terminalTask(t)) taskTimer=setTimeout(()=>watchTask(id),350);
     else await refreshTasks();
-  } catch(error) { $('task-message').textContent='Task read failed: '+error.message+' Reopen the saved task after restarting the server.'; }
+  } catch(error) { setText($('task-message'), m('Task read failed: {error} Reopen the saved task after restarting the server.', {error: diagnostic(error.message)})); }
 }
 async function createTask(options) {
   try {
@@ -298,7 +306,7 @@ async function createTask(options) {
     $('task-saved').value = t.id;
     await watchTask(t.id);
   } catch (error) {
-    $('task-message').textContent = 'Task creation failed: ' + error.message;
+    setText($('task-message'), m('Task creation failed: {error}', {error: diagnostic(error.message)}));
   }
 }
 
@@ -315,8 +323,7 @@ async function refreshProvider() {
   } catch {
     providerReady = false;
   }
-  $('provider-status').textContent = 'Real model calls are disabled. ' +
-    (providerReady ? 'Local Mock worker ready.' : 'Local Mock worker unavailable.');
+  setText($('provider-status'), m('Real model calls are disabled. {availability}', {availability: providerReady ? m('Local Mock worker ready.') : m('Local Mock worker unavailable.')}));
   syncTaskControls();
 }
 
@@ -339,7 +346,7 @@ $('cancel-task').addEventListener('click', async () => {
   if(!task)return;
   clearTimeout(taskTimer);++taskRequest;
   try {renderTask(await (await request('/api/task-cancel/'+task.id,{})).json());await refreshTasks();}
-  catch(error) {$('task-message').textContent='Cancellation failed: '+error.message;await watchTask(task.id);}
+  catch(error) {setText($('task-message'), m('Cancellation failed: {error}', {error: diagnostic(error.message)}));await watchTask(task.id);}
 });
 for(const [button,prefix,ext,type] of [['task-md','task-export','md','text/markdown'],['task-json','task-json','json','application/json']]) {
   $(button).addEventListener('click',async()=>{
@@ -347,10 +354,11 @@ for(const [button,prefix,ext,type] of [['task-md','task-export','md','text/markd
     try {
       const content=await (await request(`/api/${prefix}/${task.id}`)).text();
       download(content, type, `${task.id}.${ext}`);
-    }catch(error){$('task-message').textContent='Export failed: '+error.message;}
+    }catch(error){setText($('task-message'), m('Export failed: {error}', {error: diagnostic(error.message)}));}
   });
 }
-refreshTasks().catch(error => {$('task-message').textContent='Saved tasks unavailable: '+error.message;});
+mountLanguage();
+refreshTasks().catch(error => {setText($('task-message'), m('Saved tasks unavailable: {error}', {error: diagnostic(error.message)}));});
 
 action(async () => {
   for (const demo of await (await request('/api/demos')).json()) {

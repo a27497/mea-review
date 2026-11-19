@@ -49,6 +49,8 @@ class Handler(BaseHTTPRequestHandler):
             '/review-font/inter.woff2': ('review-font/inter.woff2', 'font/woff2'),
             '/review-font/plex-mono.woff2': ('review-font/plex-mono.woff2', 'font/woff2'),
             '/classic': ('index.html', 'text/html'),
+            '/i18n.js': ('i18n.js', 'text/javascript'),
+            '/messages-zh.js': ('messages-zh.js', 'text/javascript'),
             '/app.js': ('app.js', 'text/javascript'),
             '/style.css': ('style.css', 'text/css'),
         }

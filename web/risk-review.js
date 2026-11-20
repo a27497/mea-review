@@ -275,7 +275,7 @@ function dialogDetails(task) {
   showDialog(m('Review details'), fields([
     [m('Before change'), view.revisions.base], [m('After change'), view.revisions.head],
     [m('Collected changed files'), view.files.filter(f => f.status !== 'context').length],
-    [m('Candidates'), task.candidates.length], [m('Model requests'), task.requests.length],
+    [m('Candidates'), task.candidates.length], [m('Model requests'), (task.requests || []).length],
   ]), ...(status === 'STOPPED' ? [el('p', stopReason(task))]
     : task.reason && !demo(task) ? [el('p', diagnostic(task.reason))] : []),
   evidenceCoverage(task), controls, toolTrace(task, citation, m('Tool investigation')));

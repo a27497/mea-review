@@ -213,6 +213,15 @@ try {
   await expect($('task-progress')).toContainText('COMPLETED · HYPOTHESIS_REFUTED', {timeout: 15_000});
   assert.deepEqual((await task(refutedId)).candidates, []);
   checks.push('Guarded synthetic counterexample refutes the hypothesis and returns no candidates.');
+  assert.equal(Object.hasOwn(await task(refutedId, true), 'requests'), false);
+  const risk = await context.newPage();
+  risk.on('pageerror', error => errors.push(error.message));
+  await risk.goto(base + '/?record=' + encodeURIComponent(refutedId));
+  await risk.getByRole('button', {name: 'Review details', exact: true}).click();
+  const reviewDetails = risk.getByRole('dialog', {name: 'Review details'});
+  await expect(reviewDetails.getByText('Model requests', {exact: true}).locator('+ dd')).toHaveText('0');
+  await risk.close();
+  checks.push('The risk page opens review details with zero model requests for a saved task without a requests field.');
 
   await $('provider-controls').locator('summary').click();
   await expect($('provider-status')).toContainText('Real model calls are disabled');

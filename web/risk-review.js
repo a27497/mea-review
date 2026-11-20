@@ -1,5 +1,7 @@
-import {m, mountLanguage, setAttr, setText, setTitle} from './i18n.js';
+import {diagnostic, m, mountLanguage, setAttr, setText, setTitle} from './i18n.js';
 import {patches, sourceLines} from './frozen-code.js';
+import {candidateBlock, renderCommentEditor, resetPreview} from './comment-editor.js';
+import {actionError, evidenceCoverage, exportsFor, fields, human, request, toolTrace} from './review-components.js';
 
 const $ = id => document.getElementById(id);
 const mobile = matchMedia('(max-width: 760px)');
@@ -10,7 +12,7 @@ const short = sha => sha?.slice(0, 7) || '—';
 const sides = {head: m('After change'), base: m('Before change')};
 const severity = {HIGH: m('High risk'), MEDIUM: m('Medium risk'), LOW: m('Low risk')};
 const statuses = {
-  NEEDS_RECHECK: m('Needs another review'), STOPPED: m('Investigation incomplete'),
+  NEEDS_RECHECK: m('Needs another review'), STOPPED: m('Unable to complete review'),
   CANCELLED: m('Cancelled'), RUNNING: m('Investigating'), QUEUED: m('Waiting for investigation'),
   PENDING: m('Awaiting judgment'), REVIEWED: m('Reviewed'), COMPLETED: m('Investigation complete'),
 };
@@ -21,7 +23,7 @@ const state = {
   finding: null, queueOpen: false, filter: 'all', expanded: false, stage: null,
   listError: false, openError: false, loading: true, pending: false, selection: 0,
 };
-let poll, toastTimer;
+let poll, toastTimer, dialogOrigin;
 
 function el(tag, value = '', cls = '') {
   const node = document.createElement(tag);
@@ -65,13 +67,6 @@ function sectionHead(id, title, count, accessory) {
   if (accessory) head.append(accessory);
   return head;
 }
-async function request(path, data) {
-  const response = await fetch(path, data === undefined ? {} : {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data),
-  });
-  if (!response.ok) throw Error('REQUEST_FAILED');
-  return response.json();
-}
 const getTask = id => request('/api/task-json/' + encodeURIComponent(id));
 const getReview = id => request('/api/human/review/' + encodeURIComponent(id));
 
@@ -84,7 +79,14 @@ function toast(text) {
 function showDialog(title, ...body) {
   setText($('dialog-title'), title);
   $('dialog-body').replaceChildren(...body);
-  $('risk-dialog').showModal();
+  const dialog = $('risk-dialog');
+  if (dialog.open) {
+    $('dialog-title').focus({preventScroll: true});
+  } else {
+    dialogOrigin = document.activeElement;
+    dialog.showModal();
+  }
+  dialog.scrollTop = 0;
 }
 function focusHeading(id) {
   const heading = $(id);
@@ -105,9 +107,6 @@ function workbench(params = {}) {
     ...(finding && {'risk-finding': finding}),
   } : {};
   return '/workbench?' + new URLSearchParams({...params, ...returnParams});
-}
-function pin(task, review = state.review) {
-  return review ? {review: review.id, version: task.id} : {task: task.id};
 }
 function urlFor(row, version, finding) {
   const params = new URLSearchParams({record: row.id});
@@ -137,9 +136,14 @@ function needsRecheck(task, review) {
 }
 function mainStatus(task, review) {
   if (!task) return null;
+  if (task.status === 'STOPPED') return task.status;
   if (needsRecheck(task, review)) return 'NEEDS_RECHECK';
   if (task.status !== 'COMPLETED' || !task.candidates?.length) return task.status;
   return task.candidates.every(c => disposition(task, c, review) !== 'UNDECIDED') ? 'REVIEWED' : 'PENDING';
+}
+function stopReason(task) {
+  if (demo(task)) return task.events.findLast(event => event.kind === 'stopped')?.summary;
+  return diagnostic(task.reason);
 }
 const fileCount = task => task?.view?.coverage.reported_changed_files;
 const location = ref => ref.path + (ref.start ? ':' + ref.start + (ref.end > ref.start ? '–' + ref.end : '') : '');
@@ -237,12 +241,16 @@ function dialogVersions(task, review) {
 }
 function dialogFiles(task) {
   const list = el('ul', '', 'file-list');
+  const candidate = task.candidates.find(c => c.id === state.finding);
   for (const file of task.view.files) {
     const li = el('li');
     li.append(el('code', file.path));
-    if (file.patch) li.append(link(m('Open diff'), workbench({...pin(task), file: file.path}), 'text-link'));
+    const anchor = candidate && fileFor(task, candidate.change) === file ? candidate.change : null;
+    const back = () => dialogFiles(task);
+    if (file.patch) li.append(btn(m('Open diff'), () => dialogCode(task, file, anchor, {back}), 'text-button'));
     for (const side of ['base', 'head']) {
-      if (file.sides[side]) li.append(link(sides[side], workbench({...pin(task), file: file.path, view: side}), 'text-link'));
+      if (file.sides[side]) li.append(btn(sides[side], () =>
+        dialogCode(task, file, anchor?.side === side ? anchor : null, {source: side, back}), 'text-button'));
     }
     if (!file.patch && !Object.keys(file.sides).length) li.append(el('span', m('Source not collected'), 'empty-detail'));
     list.append(li);
@@ -250,38 +258,147 @@ function dialogFiles(task) {
   showDialog(m('Collected files'),
     ...(!task.view.coverage.complete_listing ? [el('p', m('The frozen file list is incomplete.'))] : []), list);
 }
-function overviewLink(task) {
-  return link(m('Review details'), workbench({...pin(task), overview: '1'}), 'text-link');
+function detailsButton(task) {
+  return btn(m('Review details'), () => dialogDetails(task), 'text-button');
+}
+function dialogDetails(task) {
+  const {view, status} = task;
+  const citation = ref => {
+    const location = {...ref, start: ref.line, end: ref.line};
+    const label = referenceLocation(location);
+    return sourceFor(task, location).issue
+      ? el('p', label, 'dialog-anchor')
+      : btn(label, () => showEvidence(task, location), 'text-button citation-button');
+  };
+  const controls = el('div', '', 'dialog-buttons');
+  controls.append(btn(m('View files ↗'), () => dialogFiles(task), 'secondary'), exportsFor(task));
+  showDialog(m('Review details'), fields([
+    [m('Before change'), view.revisions.base], [m('After change'), view.revisions.head],
+    [m('Collected changed files'), view.files.filter(f => f.status !== 'context').length],
+    [m('Candidates'), task.candidates.length], [m('Model requests'), task.requests.length],
+  ]), ...(status === 'STOPPED' ? [el('p', stopReason(task))]
+    : task.reason && !demo(task) ? [el('p', diagnostic(task.reason))] : []),
+  evidenceCoverage(task), controls, toolTrace(task, citation, m('Tool investigation')));
 }
 function prereviewTools(task, review, candidate) {
   const controls = el('div', '', 'review-tools');
-  controls.append(overviewLink(task));
+  controls.append(detailsButton(task));
+  if (review || task.status === 'COMPLETED') {
+    controls.append(btn(m('Human review'), () => launchHumanReview(task, candidate), 'text-button', 'human-review'));
+  }
   if (review) {
-    const reviewLink = workbench({...pin(task), panel: 'review', ...(candidate && {candidate: candidate.id})});
-    controls.append(link(m('Human review'), reviewLink, 'text-link'));
     if (review.comparisons.length || review.mode === 'MOCK_OWNED_REVIEW') {
       controls.append(link(m('Re-review'), workbench({case: 'compare', comparison: review.id}), 'text-link'));
     }
-  } else if (task.status === 'COMPLETED') {
-    controls.append(btn(m('Human review'), () => launchHumanReview(task), 'text-button'));
   }
   if (demo(task)?.recheck_reason) controls.append(btn(m('Re-review details'), () => showDialog(m('Re-review details'),
-    el('p', demo(task).recheck_reason), overviewLink(task), link(m('Import snapshot'), '/classic', 'text-link')), 'text-button'));
+    el('p', demo(task).recheck_reason), detailsButton(task), link(m('Import snapshot'), '/classic', 'text-link')), 'text-button'));
   return controls;
 }
-async function launchHumanReview(task) {
+async function launchHumanReview(task, candidate) {
   if (state.pending) return;
-  state.pending = true;
-  const {finding, selection} = state;
-  try {
-    const review = await request('/api/human/create', {task_id: task.id});
-    if (selection === state.selection) {
-      window.location.assign(workbench({...pin(task, review), panel: 'review', ...(finding && {candidate: finding})}));
+  const {row, selection, review: savedReview} = state;
+  const panel = el('div', '', 'human-panel');
+  const notice = el('p');
+  const session = {};
+  const ctx = {};
+  let review;
+  let busy = false;
+  notice.setAttribute('role', 'status');
+  showDialog(m('Human review'), panel);
+  panel.append(el('p', m('Loading workspace…')));
+  const isOpen = () => panel.isConnected && $('risk-dialog').open && selection === state.selection;
+  const notify = message => {
+    if (isOpen()) {
+      setText(notice, message);
+      notice.scrollIntoView({block: 'nearest'});
     }
+  };
+  const remember = value => {
+    review = value;
+    state.reviews.set(value.id, value);
+    state.reviews.set(row.id, value);
+    if (selection === state.selection) {
+      state.review = value;
+      renderQueue();
+      renderActions(task, candidate, review);
+    }
+  };
+  const reload = async () => remember(await getReview(review.id));
+  const act = async (fn, {reloadOnError = false} = {}) => {
+    if (busy || !isOpen()) return;
+    busy = true;
+    panel.setAttribute('aria-busy', 'true');
+    const active = document.activeElement;
+    setText(notice, '');
+    try {
+      await fn();
+    } catch (error) {
+      if (reloadOnError) {
+        resetPreview(session);
+        try { await reload(); render(); } catch { /* Report the original operation error. */ }
+      }
+      notify(actionError(error));
+    } finally {
+      busy = false;
+      panel.removeAttribute('aria-busy');
+      const activeId = active?.id;
+      if (isOpen() && activeId && !active.isConnected && !panel.contains(document.activeElement)) {
+        panel.querySelector('#' + activeId)?.focus({preventScroll: true});
+      }
+    }
+  };
+  const render = () => {
+    if (!isOpen()) return;
+    const version = review.versions.find(version => version.task_id === task.id);
+    const permission = {
+      LOCAL_PREVIEW_ONLY: m('Local preview only'),
+      MOCK_GITHUB_NOT_LIVE: m('Mock (loopback)'),
+      LIVE_GITHUB: m('GitHub (CLI)'),
+    }[version?.writeback_mode] || m('Unknown');
+    panel.replaceChildren(fields([
+      [m('Head SHA'), task.view.revisions.head], [m('Writeback'), permission],
+    ]), notice);
+    if (!candidate) {
+      panel.append(el('p', m('This frozen version has no supported candidate.')));
+      return;
+    }
+    const finding = el('section', '', 'rail-block');
+    const anchor = candidate.change;
+    finding.append(el('h3', candidate.title), el('p', referenceLocation({...anchor, start: anchor.line, end: anchor.line}), 'dialog-anchor'));
+    panel.append(finding);
+    const judgment = el('section', '', 'rail-block');
+    judgment.append(el('h3', m('Human judgment')));
+    appendJudgmentControls(judgment, task, candidate, review);
+    panel.append(judgment);
+
+    const draft = review.drafts.find(draft => draft.task_id === task.id && draft.candidate_id === candidate.id);
+    const block = candidateBlock(review, task, candidate.id, anchor.side, draft);
+    const comment = el('section', '', 'rail-block');
+    if (block) {
+      comment.append(el('h3', m('Comment state')), el('p', block.reason));
+    } else if (task.reason !== 'HYPOTHESIS_SUPPORTED') {
+      comment.append(el('h3', m('Comment state')), el('p', m('Review the missing or outdated evidence before drafting a comment.')));
+    } else if (!draft) {
+      comment.append(el('h3', m('Comment draft')), btn(m('Create a draft on {anchor}', {
+        anchor: anchor.path + ':' + anchor.line,
+      }), () => act(async () => {
+        await human('draft', {review_id: review.id, task_id: task.id, candidate_id: candidate.id});
+        await reload();
+        render();
+        if (isOpen()) panel.querySelector('textarea')?.focus();
+      }), 'secondary'));
+    }
+    if (comment.childElementCount) panel.append(comment);
+    if (draft && ((!block && task.reason === 'HYPOTHESIS_SUPPORTED') || draft.intent_id)) {
+      renderCommentEditor(panel, draft, {review, ctx, session, act, reload, render, notify});
+    }
+  };
+  try {
+    remember(savedReview ? await getReview(savedReview.id) : await human('create', {task_id: task.id}));
+    render();
   } catch {
-    toast(m('Human review could not be opened. Try again.'));
-  } finally {
-    state.pending = false;
+    if (isOpen()) panel.replaceChildren(el('p', m('Human review could not be opened. Try again.')));
   }
 }
 
@@ -308,7 +425,9 @@ function header(task, review) {
   result.append(el('p', pr.repository + ' / #' + pr.number, 'pr-identity'), heading, meta);
   const risk = authoredData?.risk;
   const highest = task.candidates[0];
-  if (highest || status === 'NEEDS_RECHECK') {
+  if (status === 'STOPPED') {
+    result.append(el('p', stopReason(task), 'risk-banner neutral stop-reason'));
+  } else if (highest || status === 'NEEDS_RECHECK') {
     const tone = risk || (status === 'NEEDS_RECHECK' ? 'MEDIUM' : 'NEUTRAL');
     const banner = el('section', '', 'risk-banner ' + tone.toLowerCase());
     if (risk) banner.append(glyph('!', 'risk-icon'));
@@ -379,29 +498,47 @@ function sourceFor(task, ref) {
     return {issue: m('Source not collected')};
   }
   const lines = sourceLines(source.text);
+  if ((ref.view_sha256 && ref.view_sha256 !== task.identity.view_sha256) ||
+      (ref.content_sha256 && ref.content_sha256 !== source.sha256) ||
+      (typeof ref.quote === 'string' && ref.quote !== lines[ref.start - 1])) {
+    return {issue: m('That citation does not match the collected path, side and revision.')};
+  }
   if (!ref.start || ref.start < 1 || ref.end > lines.length || ref.end < ref.start) {
     return {issue: m('The referenced lines were not collected.')};
   }
   return {file, lines};
 }
-function listing(rows, task, file, ref) {
-  const body = el('div', '', 'source-lines');
+function listing(rows, task, file, ref, {diff = false, selected} = {}) {
+  const body = el('div', '', diff ? 'source-lines diff-lines' : 'source-lines');
   setAttr(body, 'aria-label', referenceLocation(ref));
   body.tabIndex = 0;
   body.setAttribute('role', 'region');
   for (const row of rows) {
+    if (row.header || (!row.base && !row.head)) {
+      body.append(el('div', row.text, 'diff-header'));
+      continue;
+    }
     const actualSide = row.kind === 'del' ? 'base' : row.kind === 'add' ? 'head' : ref.side;
     const line = row[actualSide];
-    const node = el('div', '', 'code-line' + (row.kind ? row.kind === 'del' ? ' removed' : ' added' : ''));
+    const node = el('div', '', 'code-line ' + ({add: 'added', del: 'removed'}[row.kind] || ''));
     node.dataset.side = actualSide;
-    node.dataset.line = line;
-    const number = el('span', line, 'line-no');
-    const path = actualSide === 'base' ? file.base_path : file.path;
-    setAttr(number, 'title', referenceLocation({
-      path, start: line, end: line, side: actualSide, revision: task.view.revisions[actualSide],
-    }));
-    setAttr(number, 'aria-label', m('{side}, line {line}', {side: sides[actualSide], line}));
-    node.append(number, glyph(row.kind === 'del' ? '−' : row.kind === 'add' ? '+' : '', 'line-sign'), el('code', row.text));
+    if (line) node.dataset.line = line;
+    for (const side of diff ? ['base', 'head'] : [actualSide]) {
+      const number = el('span', row[side] ?? '', 'line-no');
+      if (row[side]) {
+        const path = side === 'base' ? file.base_path : file.path;
+        setAttr(number, 'title', referenceLocation({
+          path, start: row[side], end: row[side], side, revision: task.view.revisions[side],
+        }));
+        setAttr(number, 'aria-label', m('{side}, line {line}', {side: sides[side], line: row[side]}));
+        if (selected?.side === side && row[side] === selected.line) {
+          node.dataset.located = '';
+          number.classList.add('located-line');
+        }
+      }
+      node.append(number);
+    }
+    node.append(glyph(row.kind === 'del' ? '−' : row.kind === 'add' ? '+' : '', 'line-sign'), el('code', row.text));
     body.append(node);
   }
   return body;
@@ -426,9 +563,41 @@ function snippetRows(file, lines, ref, expanded) {
 function referenceLocation(ref) {
   return m('{location} · {side} · {revision}', {location: location(ref), side: sides[ref.side], revision: ref.revision});
 }
-function fullCodeLink(task, file, ref, text, source = false) {
-  return link(text, workbench({...pin(task), file: file.path, line: ref.line || ref.start, side: ref.side,
-    ...(source ? {view: ref.side} : {})}), 'text-link');
+function dialogCode(task, file, ref, {source, back} = {}) {
+  const title = m(source ? 'Frozen source' : 'Unified diff');
+  const sideRef = side => ({
+    path: side === 'base' ? file.base_path : file.path, side, revision: task.view.revisions[side],
+  });
+  const binding = !ref || (fileFor(task, ref) === file && ref.revision === task.view.revisions[ref.side] &&
+    (!source || ref.side === source));
+  const selected = binding && ref ? {...ref, line: ref.line || ref.start} : null;
+  const rows = source
+    ? sourceLines(file.sides[source]?.text).map((text, index) => ({text, [source]: index + 1}))
+    : patches(file.patch).flatMap(hunk => [{text: hunk.text, header: true}, ...hunk.rows]);
+  const anchor = selected ? {...sideRef(selected.side), start: selected.line, end: selected.line}
+    : sideRef(source || 'head');
+  const body = el('div', '', 'full-code');
+  if (back) body.append(btn(m('Back to files'), back, 'text-button'));
+  for (const side of source ? [source] : ['base', 'head']) {
+    body.append(el('p', referenceLocation(sideRef(side)), 'dialog-anchor'));
+  }
+  if (selected) body.append(el('p', referenceLocation(anchor), 'dialog-anchor'));
+  const hasLine = !selected || rows.some(row => row[selected.side] === selected.line);
+  if (!binding || !hasLine) {
+    body.append(el('p', m(binding ? 'The referenced lines were not collected.' :
+      'That citation does not match the collected path, side and revision.')));
+  }
+  if (rows.length) {
+    const code = listing(rows, task, file, anchor, {diff: !source, selected});
+    body.append(code);
+  } else {
+    body.append(el('p', m(source ? 'No text is available for this side.' : 'No unified diff was collected for this file.')));
+  }
+  showDialog(title, body);
+  body.querySelector('[data-located]')?.scrollIntoView({block: 'nearest', inline: 'start'});
+}
+function fullCodeButton(task, file, ref, text, source) {
+  return btn(text, () => dialogCode(task, file, ref, {source}), 'text-button');
 }
 function renderCode(task, candidate) {
   const anchor = findingAnchor(task, candidate);
@@ -443,20 +612,24 @@ function renderCode(task, candidate) {
   setAttr(meta, 'title', referenceLocation(anchor));
   top.append(glyph('', 'file-icon'), el('code', anchor.path), meta);
   panel.append(top);
+  const changeFile = fileFor(task, candidate.change);
+  const diff = changeFile?.patch;
+  if (changeFile && (diff || file === changeFile)) {
+    const full = fullCodeButton(task, changeFile, candidate.change,
+      meta.textContent + ' ↗', diff ? undefined : anchor.side);
+    setAttr(full, 'aria-label', m(diff ? 'Full diff ↗' : 'Full source ↗'));
+    setAttr(full, 'title', referenceLocation(anchor));
+    full.classList.add('anchor-label');
+    meta.replaceWith(full);
+  }
   if (issue) {
     panel.append(el('p', issue, 'conclusion'), el('p', referenceLocation(anchor), 'conclusion'));
     section.append(panel);
     return section;
   }
 
-  const full = fullCodeLink(task, file, candidate.change, meta.textContent + ' ↗', !file.patch);
-  setAttr(full, 'aria-label', m(file.patch ? 'Full diff ↗' : 'Full source ↗'));
-  setAttr(full, 'title', referenceLocation(anchor));
-  full.classList.add('anchor-label');
-  meta.replaceWith(full);
-
   const controls = el('div', '', 'code-controls');
-  controls.append(fullCodeLink(task, file, candidate.change, m('Full source ↗'), true),
+  controls.append(fullCodeButton(task, file, anchor, m('Full source ↗'), anchor.side),
     el('span', referenceLocation(anchor), 'evidence-side'));
   const updateSnippet = () => {
     panel.querySelector('.source-lines')?.remove();
@@ -485,10 +658,10 @@ function showEvidence(task, ref) {
     body.push(el('p', issue));
     const gap = task.view.coverage.omitted_sources.find(row => row.path === ref.path && row.side === ref.side);
     if (gap?.reason && gap.reason !== 'SOURCE_NOT_CAPTURED') body.push(el('p', m('Capture record · {reason}', {reason: gap.reason}), 'dialog-anchor'));
-    body.push(overviewLink(task));
+    body.push(detailsButton(task));
   } else {
     body.push(listing(snippetRows(file, lines, ref, true).filter(row => row[ref.side] >= ref.start && row[ref.side] <= ref.end),
-      task, file, ref), fullCodeLink(task, file, ref, m('Full source ↗'), true));
+      task, file, ref), fullCodeButton(task, file, ref, m('Full source ↗'), ref.side));
   }
   showDialog(ref.title || m('Supporting evidence'), ...body);
 }
@@ -543,6 +716,9 @@ function notes(task, candidate) {
 async function saveJudgment(value, controls = []) {
   if (state.pending) return;
   const {task, row, review, finding: candidateId} = state;
+  const candidate = task.candidates.find(candidate => candidate.id === candidateId);
+  if (!candidate || !canJudge(task, candidate, review)) return;
+  const humanOpen = $('risk-dialog').open && dialogOrigin?.id === 'human-review';
   state.pending = true;
   controls.forEach(control => {control.disabled = true;});
   try {
@@ -557,7 +733,7 @@ async function saveJudgment(value, controls = []) {
       state.review = active;
       if ($('risk-dialog').open) $('risk-dialog').close();
       renderReview();
-      $('record-judgment')?.focus({preventScroll: true});
+      (humanOpen ? $('human-review') : $('record-judgment') || $('review-title'))?.focus({preventScroll: true});
     }
     renderQueue();
     toast(m('Local judgment saved · {judgment}', {judgment: judgments[record.disposition]}));
@@ -583,22 +759,31 @@ function needsFindingRecheck(task, candidate, review) {
     review?.rereviews?.some(run => run.new_task_id === task.id && run.candidates.some(row =>
       row.candidate_id === candidate.id && ['NEEDS_RECHECK', 'AT_OUTDATED_COMMENT_LOCATION'].includes(row.status)));
 }
-function renderActions(task, candidate, review) {
-  const actions = $('review-actions');
-  actions.hidden = !candidate;
-  actions.replaceChildren();
-  if (!candidate) return;
+function canJudge(task, candidate, review) {
+  return task.status === 'COMPLETED' && mainStatus(task, review) !== 'REVIEWED' &&
+    !needsFindingRecheck(task, candidate, review);
+}
+function appendJudgmentControls(actions, task, candidate, review) {
   const current = disposition(task, candidate, review);
-  if (needsFindingRecheck(task, candidate, review)) {
-    actions.append(el('p', m('Review the missing or outdated evidence before recording a judgment.'), 'action-caption'));
+  if (!canJudge(task, candidate, review)) {
+    if (current !== 'UNDECIDED') actions.append(el('p', judgments[current], 'action-caption'));
+    else if (needsFindingRecheck(task, candidate, review)) actions.append(el('p',
+      m('Review the missing or outdated evidence before recording a judgment.'), 'action-caption'));
     return;
   }
   actions.append(el('p', current === 'UNDECIDED' ? m('Judgments are saved locally') : judgments[current], 'action-caption'));
   const buttons = el('div', '', 'action-buttons');
   const defer = btn(m('Defer'), () => saveJudgment('UNDECIDED', [defer, record]), 'secondary');
-  const record = btn(m('Record judgment'), () => judgmentDialog(task, candidate, review), 'primary', 'record-judgment');
+  const record = btn(m('Record judgment'), () => judgmentDialog(task, candidate, review), 'primary',
+    actions.id === 'review-actions' ? 'record-judgment' : 'human-judgment');
   buttons.append(defer, record);
   actions.append(buttons);
+}
+function renderActions(task, candidate, review) {
+  const actions = $('review-actions');
+  actions.replaceChildren();
+  if (candidate && mainStatus(task, review) !== 'REVIEWED') appendJudgmentControls(actions, task, candidate, review);
+  actions.hidden = !actions.childElementCount;
 }
 
 function renderReview() {
@@ -634,7 +819,8 @@ function renderReview() {
       m('Findings will appear when the investigation finishes.'), 'empty-detail'));
   }
   const coverage = task.view.coverage;
-  if (!demo(task)?.recheck_reason && (!coverage.complete_listing || coverage.capture?.status === 'INCOMPLETE')) {
+  if (task.status !== 'STOPPED' && !demo(task)?.recheck_reason &&
+    (!coverage.complete_listing || coverage.capture?.status === 'INCOMPLETE')) {
     root.append(el('p', m('Some changes or evidence may be missing. See review details for the collected material.'), 'scope-notice'));
   }
   root.append(prereviewTools(task, review, candidate));
@@ -643,6 +829,7 @@ function renderReview() {
 
 async function openRecord(row, {version, finding, focus} = {}) {
   clearTimeout(poll);
+  if ($('risk-dialog').open) $('risk-dialog').close();
   const selection = ++state.selection;
   Object.assign(state, {row, task: null, review: null, finding, expanded: false, stage: null, loading: true, openError: false});
   showQueue(false);

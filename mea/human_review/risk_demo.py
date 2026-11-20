@@ -37,6 +37,10 @@ def prepare(entry, default_pr):
     if snapshot['provenance']['capture_sha256'] != digest({key: snapshot[key] for key in
                                                             ('pr', 'revisions', 'scope', 'files')}):
         raise ValueError('DEMO_CAPTURE_DIGEST')
+    stopped = entry['status'] == 'STOPPED'
+    if stopped and (view.value['coverage']['complete_listing'] or entry['findings']
+                    or entry.get('review') or not entry.get('stop_reason')):
+        raise ValueError('DEMO_STOP_REQUIRES_INCOMPLETE_INPUT')
     results, proposed = [], []
     for finding in entry['findings']:
         anchor = finding['anchor']
@@ -72,21 +76,25 @@ def prepare(entry, default_pr):
     # used to validate its citations. No investigator or provider was run.
     source = dict(kind=MODE, presentation=presentation)
     goal = '核对冻结源码与预写的审查发现'
-    budget = limits(dict(tools=len(results)))
+    budget = limits(dict(tools=max(1, len(results))))
     identity = dict(view_sha256=view.sha256, input_sha256=view.value['input_sha256'],
                     revisions=view.value['revisions'], policy_version='authored-risk-review-demo-v1',
                     tool_version=TOOL_VERSION, result_version=RESULT_VERSION, budget=budget, goal=goal,
                     editorial_sha256=digest(entry))
     now = time.time()
-    reason = 'EVIDENCE_INSUFFICIENT' if entry.get('recheck_reason') else 'HYPOTHESIS_SUPPORTED'
+    reason = 'EVIDENCE_INSUFFICIENT' if stopped or entry.get('recheck_reason') else 'HYPOTHESIS_SUPPORTED'
     task = dict(schema=SCHEMA, id='task-' + digest(identity), identity=identity, mode=MODE, provider='NONE',
-                source=source, pr=view.value['pr'], view=view.value, status='COMPLETED', reason=reason,
+                source=source, pr=view.value['pr'], view=view.value, status='STOPPED' if stopped else 'COMPLETED', reason=reason,
                 goal=goal, budget=budget, usage=dict(rounds=0, tools=len(results),
                                                      output_bytes=sum(len(canonical(r)) for r in results)),
                 created_at=now, updated_at=now, events=[], results=results, candidates=candidates, rejected=[],
                 active=None, requests=[], notice=NOTICE)
-    event(task, 'created', 'Authored synthetic findings. Investigator and provider: NOT_RUN.')
-    event(task, 'finished', 'Frozen evidence references checked with the native source reader.', reason=reason)
+    if stopped:
+        event(task, 'created', '合成冻结快照。调查与提供方未运行。')
+        event(task, 'stopped', entry['stop_reason'], reason=reason)
+    else:
+        event(task, 'created', 'Authored synthetic findings. Investigator and provider: NOT_RUN.')
+        event(task, 'finished', 'Frozen evidence references checked with the native source reader.', reason=reason)
     judgments = {candidate['id']: entry['review'][finding['id']]
                  for candidate, finding in zip(candidates, entry['findings'], strict=True)
                  if finding['id'] in entry.get('review', {})}
@@ -106,6 +114,8 @@ def seed(service):
             with service.store.transaction() as db:
                 db.execute('INSERT OR IGNORE INTO tasks VALUES (?,?,?)',
                            (task['id'], digest(task['identity']), canonical(task).decode()))
+            if task['status'] == 'STOPPED':
+                continue
             review = service.create(task['id'])
             if task['source']['presentation']['default']:
                 default_review = review['id']

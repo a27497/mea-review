@@ -47,6 +47,8 @@ class Handler(BaseHTTPRequestHandler):
             '/': ('risk-review.html', 'text/html'),
             '/workbench': ('review-v3.html', 'text/html'),
             '/frozen-code.js': ('frozen-code.js', 'text/javascript'),
+            '/review-components.js': ('review-components.js', 'text/javascript'),
+            '/comment-editor.js': ('comment-editor.js', 'text/javascript'),
             '/risk-review.js': ('risk-review.js', 'text/javascript'),
             '/risk-review.css': ('risk-review.css', 'text/css'),
             '/review-v3.js': ('review-v3.js', 'text/javascript'),

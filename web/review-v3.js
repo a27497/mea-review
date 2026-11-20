@@ -1,5 +1,7 @@
 import {patches, sourceLines} from './frozen-code.js';
 import {copy, diagnostic, m, mountLanguage, option, setAttr, setText, setTitle} from './i18n.js';
+import {candidateBlock, candidateStatus, renderCommentEditor, resetPreview as resetCommentPreview} from './comment-editor.js';
+import {actionError, block, button, detail, el, endpoint, evidenceCoverage, exportsFor, fields, human, lazy, link, pre, request, tag, toolTrace} from './review-components.js';
 
 const $ = id => document.getElementById(id);
 const ui = {files: $('files'), code: $('code'), review: $('review')};
@@ -32,7 +34,6 @@ const anchors = {base: 'LEFT', head: 'RIGHT'};
 const terminal = new Set(['COMPLETED', 'STOPPED', 'CANCELLED']);
 const owns = review => review?.mode === 'MOCK_OWNED_REVIEW';
 const liveReview = review => review?.mode === 'LIVE_GITHUB_REVIEW';
-const liveSend = send => send?.mode === 'LIVE_GITHUB';
 const humanTask = () => {
   const id = current().taskId;
   return id ? state.human?.tasks.find(t => t.id === id) : state.human?.tasks[0];
@@ -70,39 +71,10 @@ const statusTone = status => status === 'STOPPED' ? 'danger'
   : ['QUEUED', 'RUNNING', 'COMPLETED'].includes(status) ? 'accent' : 'warn';
 const inboxGroups = {tasks: m('Saved investigations'), reviews: m('Saved human reviews')};
 
-function el(tag, value = '', cls = '') {
-  const n = document.createElement(tag);
-  if (value) setText(n, value);
-  if (cls) n.className = cls;
-  return n;
-}
-function button(title, fn, cls = 'button', id) {
-  const n = el('button', title, cls);
-  n.type = 'button';
-  if (id) n.id = id;
-  n.addEventListener('click', fn);
-  return n;
-}
 function currentAttr(n, yes) {
   if (yes) n.setAttribute('aria-current', 'true');
   else n.removeAttribute('aria-current');
   return n;
-}
-function link(text, href, cls = '') {
-  const a = el('a', text, cls); a.href = href; return a;
-}
-function detail(title, ...children) {
-  const d = el('details', '', 'details'); d.append(el('summary', title), ...children); return d;
-}
-function fields(entries) {
-  const dl = el('dl', '', 'fields');
-  for (const [key, value] of entries) dl.append(el('dt', key), el('dd', value ?? '—'));
-  return dl;
-}
-function block(parent, title, ...children) {
-  const section = el('section', '', 'rail-block');
-  if (title) section.append(el('h3', title));
-  section.append(...children); parent.append(section); return section;
 }
 function card(title, subtitle, fn, id) {
   const b = button('', fn, 'rail-card', id);
@@ -111,8 +83,6 @@ function card(title, subtitle, fn, id) {
   b.append(row, el('small', subtitle));
   return b;
 }
-const pre = value => el('pre', JSON.stringify(value, null, 2));
-const tag = (value, tone = '') => el('span', value, 'tag ' + tone);
 function reviewLabels(task) {
   const version = state.human.versions.find(v => v.task_id === task.id);
   const source = candidateSources[version?.candidate_source] || version?.candidate_source || m('Unknown');
@@ -120,16 +90,6 @@ function reviewLabels(task) {
   return [el('span', m('Candidate source: {source}', {source}), 'tag candidate-source'),
     el('span', m('Writeback: {mode}', {mode: writeback}), 'tag writeback-mode')];
 }
-const endpoint = (path, id) => path + encodeURIComponent(id);
-async function request(path, data) {
-  const res = await fetch(path, data === undefined ? {} : {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
-  });
-  const json = await res.json();
-  if (!res.ok) throw Error(json.error || 'REQUEST_FAILED');
-  return json;
-}
-const human = (path, data) => request('/api/human/' + path, data);
 const rawTask = id => request(endpoint('/api/task-json/', id));
 function notify(message, error = false) {
   clearTimeout(toastTimer);
@@ -137,15 +97,6 @@ function notify(message, error = false) {
   n.classList.toggle('error', error);
   toastTimer = setTimeout(() => {n.hidden = true;}, error ? 11000 : 3600);
 }
-const errorText = {
-  TASK_NOT_FOUND: m('This saved task could not be found.'),
-  PR_HEAD_DRIFT: m('The Mock PR is on a different frozen head. No comment was sent.'),
-  DUPLICATE_REMOTE_ANCHOR: m('A Mock comment already exists on this exact anchor.'),
-  REMOTE_PERMISSION_OR_STATE: m('The Mock target does not currently allow comments.'),
-  CONFIRMATION_SNAPSHOT_CHANGED: m('The approved payload or Mock target changed. Generate a fresh preview.'),
-  LIVE_PUBLISH_DISABLED_NO_TARGET: m('Live publishing is disabled.'),
-  COMMENT_BODY_REQUIRED: m('Enter a comment before saving.'),
-};
 async function act(fn, {reloadOnError = false} = {}) {
   if (state.busy) return;
   state.busy = true;
@@ -157,7 +108,7 @@ async function act(fn, {reloadOnError = false} = {}) {
       resetPreview();
       try { await refreshHuman(); renderRail(true); } catch { /* report original failure */ }
     }
-    notify(errorText[e.message] || m('Action unavailable · {error}', {error: diagnostic(e.message)}), true);
+    notify(actionError(e), true);
   } finally {
     state.busy = false;
     $('workspace').removeAttribute('aria-busy');
@@ -445,7 +396,7 @@ function overviewScope(root, t) {
     display.append(el('h3', c.title), el('p', path, 'mono'), el('p', c.trigger), el('p', c.impact));
     if (state.mode === 'human') {
       display.append(tag(m('Local judgment · {judgment}', {judgment: dispositionLabels[dispositionFor(t, c)]})),
-        tag(diagnostic(candidateStatus(t, c))));
+        tag(diagnostic(candidateStatus(state.human, t, c))));
     }
     const actions = el('div', '', 'actions scope-actions');
     actions.append(button(m('Open finding'), () => scopeFinding(t, c), 'button primary'));
@@ -549,32 +500,7 @@ function renderOverview() {
   if (anchorNeedsCheck || comparisonNeedsCheck) status.append(tag(m('Recheck required'), 'warn'));
   if (pending) status.append(tag(m('{count} awaiting human judgment', {count: pending})));
   summary.append(versionControls, metrics, status);
-  const evidence = el('div', '', 'overview-coverage');
-  evidence.append(el('h3', m('Evidence coverage')));
-  const reported = t.view.coverage.reported_changed_files;
-  if (reported != null && reported !== files) evidence.append(el('p', m('{collected} of {reported} reported changed files were collected.', {collected: files, reported})));
-  const capture = t.view.coverage.capture;
-  const omissions = t.view.coverage.omitted_sources || [];
-  if (capture?.gaps.length) {
-    const gaps = detail(m('Capture gaps'));
-    const counts = el('div', '', 'overview-status');
-    for (const [key, count] of Object.entries(capture.gap_counts)) {
-      if (count) counts.append(tag(m('{count} · {kind}', {count, kind: diagnostic(key)}), 'warn'));
-    }
-    gaps.append(counts);
-    for (const g of capture.gaps) gaps.append(el('p', m('{kind} · {detail}', {kind: diagnostic(g.kind),
-      detail: [g.code, g.request, g.path, sides[g.side]].filter(Boolean).join(' · ')}), 'mono'));
-    evidence.append(gaps);
-  } else if (omissions.length) {
-    evidence.append(detail(m('Unavailable sources'), ...omissions.map(omission =>
-      el('p', [omission.path, sides[omission.side], omission.reason].filter(Boolean).join(' · '), 'mono'))));
-  }
-  const truncated = t.results.filter(r => r.truncated || r.read?.status === 'TRUNCATED').length;
-  if (truncated) evidence.append(el('p', m(truncated === 1 ? '{count} recorded tool result was truncated.'
-    : '{count} recorded tool results were truncated.', {count: truncated})));
-  if (!evidence.querySelector('p, details')) evidence.append(el('p', capture?.status === 'COMPLETE' ? m('No capture gaps were recorded.')
-    : m('No detailed capture gap report is available.'), 'rail-sub'));
-  summary.append(evidence);
+  summary.append(evidenceCoverage(t));
   wrap.append(summary);
   overviewScope(wrap, t);
 }
@@ -841,24 +767,6 @@ function locationCard(e, task, title = name(e.path), subtitle = sides[e.side] + 
   b.title = e.path + ' · ' + sides[e.side] + ' · L' + e.line + ' · ' + e.revision;
   return b;
 }
-function lazy(title, build) {
-  const d = detail(title);
-  d.addEventListener('toggle', () => {
-    if (d.open && d.childElementCount === 1) d.append(...build());
-  });
-  return d;
-}
-function exportsFor(task, review) {
-  const wrap = el('div', '', 'actions');
-  for (const [ext, route] of (review
-    ? [['json','/api/human/export-json/'],['md','/api/human/export-md/']]
-    : [['json','/api/task-json/'],['md','/api/task-export/']])) {
-    const a = link(ext === 'json' ? m('Export JSON') : m('Export Markdown'), endpoint(route,(review || task).id), 'button');
-    a.download = (review || task).id + '.' + ext;
-    wrap.append(a);
-  }
-  return wrap;
-}
 function renderCompleted(n, t) {
   // Real and Mock provider tasks are labelled as such; their request count comes from the task record.
   const heading = {REAL_PROVIDER_DEEPSEEK:m('Real model investigation'), MOCK_PROVIDER_NOT_AI:m('Mock provider investigation')}[t?.mode];
@@ -893,16 +801,7 @@ function renderCompleted(n, t) {
     [results.filter(r => r.tool === 'read_source').length,m('Source reads')],[headCount,m('HEAD lines')]]) {
     const d = el('div'); d.append(el('strong',String(value)),el('span',title)); metrics.append(d);
   }
-  const investigation = lazy(m('Agent investigation'), () => {
-    const timeline = el('ol','','timeline');
-    for (const e of t.events) timeline.append(el('li',e.summary));
-    const output = results.map((r, i) => lazy(m('Tool {number} · {tool}', {number: i + 1, tool: r.tool + (r.read ? ' · ' + name(r.read.path) : '')}), () => [
-      r.read ? fields([[m('Path'),r.read.path],[m('Returned'),r.read.returned_start + '–' + r.read.returned_end],[m('Status'),diagnostic(r.read.status)]]) : el('p',r.coverage),
-      ...(r.truncated ? [tag(diagnostic('TRUNCATED'), 'warn')] : []),
-      ...r.evidence.map(e => locationCard(e,t,name(e.path) + ':' + e.line, e.quote)),
-      lazy(m('Raw feedback, limits and citations'), () => [pre(r)])]));
-    return [el('p',m('Saved timeline and frozen tool feedback.')),detail(m('Event timeline'),timeline),...output];
-  });
+  const investigation = toolTrace(t, e => locationCard(e, t, name(e.path) + ':' + e.line, e.quote));
   const investigationSummary = investigation.querySelector('summary');
   investigationSummary.className = 'rail-card';
   investigationSummary.replaceChildren();
@@ -954,8 +853,7 @@ function renderCompleted(n, t) {
     lazy(m('Budget and recorded usage'), () => [pre({budget:t.budget,usage:t.usage,coverage:t.view.coverage})]), exportsFor(t)
   ]));
 }
-function resetPreview() { state.preview = null; state.acknowledged = false; }
-function editorKey(d) { return d.id + ':' + d.revision; }
+const resetPreview = () => resetCommentPreview(state);
 async function refreshHuman() {
   state.human = await human(endpoint('review/',state.human.id));
   if (state.compareReview?.id === state.human.id) state.compareReview = state.human;
@@ -974,20 +872,6 @@ function selectHumanVersion(id) {
   resetPreview(); render();
   for (const pane of Object.values(ui)) pane.scrollTop = 0;
   if (!state.overview) ui.review.focus({preventScroll: true});
-}
-function readStatus(d) {
-  return d.status === 'CONFIRMED_MOCK_ONLY' ? 'CONFIRMED' : d.status === 'CONFIRMED_LIVE' ? 'CONFIRMED · LIVE' : d.status || 'UNKNOWN';
-}
-function candidateBlock(t, candidateId, side, draft) {
-  const check = (state.human.rereviews || []).find(x => x.new_task_id === t.id)?.candidates.find(x => x.candidate_id === candidateId);
-  if (check && check.status !== 'NEW') return check;
-  if (side === 'head' || draft?.anchor.side === 'head') {
-    return state.human.versions.find(x => x.task_id === t.id)?.head_draft_block;
-  }
-}
-function candidateStatus(t, c) {
-  const d = state.human.drafts.find(x => x.task_id === t.id && x.candidate_id === c.id);
-  return candidateBlock(t, c.id, c.change.side, d)?.status || (d ? readStatus(d) : 'NOT DRAFTED');
 }
 const dispositionLabels = {ACCEPTED: m('Accepted'), IGNORED: m('Ignored'), UNDECIDED: m('Undecided')};
 function dispositionFor(t, c) {
@@ -1016,121 +900,6 @@ function renderDisposition(n, t, c) {
   block(n, m('Human judgment'), status, controls,
     el('p', m('Saved in this local workspace. Comments require separate drafting and exact confirmation.'), 'rail-sub'));
 }
-function renderEditor(n,t,c,d) {
-  const ctx = current();
-  const editable = !d.intent_id;
-  if (ctx.editorKey !== editorKey(d)) {
-    ctx.editorKey = editorKey(d); ctx.editorText = d.body; resetPreview();
-  }
-  const section = block(n, m('Comment draft'));
-  section.classList.add('editor');
-  const status = readStatus(d);
-  const draftTag = tag(diagnostic(status),status === 'UNCERTAIN' ? 'warn' : 'accent'); draftTag.id = 'draft-status';
-  section.append(el('p',m('Revision {revision} · {anchor}', {revision: d.revision, anchor: name(d.anchor.path) + ':' + d.anchor.line + ' ' + anchors[d.anchor.side]}), 'rail-sub'),draftTag);
-  const lab = el('label',m('Comment text')); lab.htmlFor = 'comment-body';
-  const body = el('textarea'); body.id = 'comment-body'; body.value = ctx.editorText;
-  body.maxLength = 8000; body.readOnly = !editable; body.spellcheck = true;
-  section.append(lab,body);
-  if (editable) {
-    const commands = el('div','','actions');
-    const save = action(m('Save draft'),async () => {
-      const saved = await human('edit',{draft_id:d.id,body:body.value,anchor:d.anchor});
-      ctx.editorKey = editorKey(saved); ctx.editorText = saved.body; resetPreview();
-      await refreshHuman(); renderRail(true); notify(m('Draft saved.'));
-    },'save-draft');
-    const previewButton = action(m('Preview exact comment'),async () => {
-      state.preview = await human('preview',{draft_id:d.id}); state.acknowledged = false;
-      renderRail(true); $('exact-preview')?.focus();
-    },'preview-comment',true);
-    const changed = () => body.value !== d.body;
-    save.disabled = !changed(); previewButton.disabled = changed();
-    body.addEventListener('input', () => {
-      ctx.editorText = body.value; resetPreview();
-      section.querySelector('#exact-preview')?.remove();
-      save.disabled = !changed(); previewButton.disabled = changed();
-      if ($('mock-send')) $('mock-send').disabled = changed() || !!ctx.invalidateMock;
-    });
-    commands.append(save, previewButton); section.append(commands);
-    if (state.preview?.draft_id === d.id && !changed()) {
-      const p = state.preview;
-      const exact = el('section','','rail-block'); exact.id = 'exact-preview'; exact.tabIndex = -1;
-      exact.append(el('h3',m('Exact comment preview')),fields([[m('Target'),repo(p.target)],[m('Commit'),p.payload.commit_id],
-        [m('Diff anchor'),p.payload.path + ':' + p.payload.line + ' ' + p.payload.side],[m('Mode'),p.mode]]),
-        el('pre',p.payload.body,'exact-body'));
-      otherComments(exact,p.other_comments_at_anchor);
-      if (p.mode === 'MOCK_GITHUB_NOT_LIVE' && p.confirmation_digest !== d.confirmation?.confirmation_digest) {
-        const ack = el('input'); ack.type = 'checkbox'; ack.id = 'acknowledge'; ack.checked = state.acknowledged;
-        const lab = el('label'); lab.htmlFor = ack.id;
-        lab.append(ack,copy(m('I reviewed the exact text, revision and diff anchor.')));
-        const confirm = button(m('Confirm Mock comment'),() => act(async () => {
-          await human('confirm',{draft_id:d.id,preview:p,human_confirmed:state.acknowledged});
-          ctx.invalidateMock = false;
-          await refreshHuman(); renderRail(true); $('mock-send')?.focus(); notify(m('Exact Mock comment confirmed.'));
-        }, {reloadOnError:true}),'button primary','confirm-comment');
-        confirm.disabled = !ack.checked;
-        ack.addEventListener('change',() => {state.acknowledged = ack.checked; confirm.disabled = !ack.checked;});
-        exact.append(lab,confirm);
-      }
-      section.append(exact);
-    }
-    if (d.status === 'CONFIRMED_MOCK_ONLY' && d.confirmation && owns(state.human)) {
-      const send = button(m('Send to Mock'),() => act(async () => {
-        const r = await human('send',{draft_id:d.id,confirmation_digest:d.confirmation.confirmation_digest,mode:'MOCK'});
-        resetPreview(); await refreshHuman(); renderRail(true);
-        $('reconcile-send')?.focus(); notify(r.status === 'UNCERTAIN' ? m('Outcome unknown. Reconcile without resending.') : m('{status} · Simulated only', {status: diagnostic(r.status)}));
-      }, {reloadOnError:true}),'button primary','mock-send');
-      send.disabled = changed() || !!ctx.invalidateMock || !!(state.preview && state.preview.confirmation_digest !== d.confirmation.confirmation_digest);
-      const c = d.confirmation.payload;
-      section.append(detail(m('Saved confirmation'), fields([[m('Commit'),c.commit_id],[m('Diff anchor'),c.path + ':' + c.line + ' ' + c.side]]),el('pre',c.body,'exact-body')),send);
-    }
-  }
-  if (d.approval && d.confirmation) {
-    const c = d.confirmation.payload;
-    const confirmed = block(n,m('Human confirmation'));
-    confirmed.id = 'live-confirmation';
-    confirmed.append(fields([[m('Pull request'),repo(d.confirmation.target)],[m('Head commit'),c.commit_id],[m('Line'),c.path + ':' + c.line + ' ' + c.side],
-      [m('Approval'),d.approval.reference],[m('Binding'),d.approval.binding_sha256]]),el('pre',c.body,'exact-body'),
-      el('p',m('Confirmed in the attended command-line lane. This workbench cannot send to GitHub.'),'rail-sub'));
-    otherComments(confirmed,d.confirmation.other_comments_at_anchor,d.approval.acknowledged_other_comment_ids);
-  }
-  const sends = state.human.sends.filter(s => s.draft_id === d.id);
-  if (sends.length) {
-    const live = sends.some(liveSend);
-    const history = block(n,live ? m('GitHub writeback') : m('Mock dispatch'));
-    if (live) history.id = 'writeback-status';
-    for (const send of sends) {
-      history.append(el('p',m('{status} · {mode}', {status: diagnostic(send.status), mode: liveSend(send) ? m('LIVE GITHUB') : m('MOCK ONLY')}),'mono'));
-      if (liveSend(send) && send.remote_comment?.html_url?.startsWith('https://github.com/')) {
-        history.append(link(m('Comment {id} on GitHub', {id: send.remote_comment.id}),send.remote_comment.html_url,'mono'));
-      }
-      if (liveSend(send) && ['UNCERTAIN','SENDING','NOT_SENT'].includes(send.status)) {
-        const callout = el('div','','callout warn');
-        callout.append(el('h3',m('Live outcome needs the command-line lane')),el('p',m('Reconcile read-only with mea.github_writeback before any further send.')));
-        history.append(callout);
-      } else if (['UNCERTAIN','SENDING'].includes(send.status)) {
-        const callout = el('div','','callout warn');
-        callout.append(el('h3',m('Mock delivery outcome unknown')),el('p',m('The local Mock may already have stored the comment. Use read-only reconciliation to check for one exact match.')));
-        history.append(callout,action(m('Reconcile read-only'), async () => {
-          const r = await human('reconcile',{intent_id:send.id}); await refreshHuman(); renderRail(true);
-          notify(r.status === 'UNCERTAIN' ? m('No unique complete match. Outcome remains unknown.') : m('{status} · No resend.', {status: diagnostic(r.status)}));
-        },'reconcile-send'));
-      }
-      if (send.status === 'NOT_SENT' && !liveSend(send)) {
-        const ack = el('input'); ack.type = 'checkbox';
-        const id = 'unsent-ack'; ack.id = id;
-        const lab = el('label'); lab.htmlFor = id; lab.append(ack,copy(m('Discard this provably unsent intent.')));
-        const release = action(m('Require fresh confirmation'),async () => {
-          await human('release-not-sent',{intent_id:send.id,human_confirmed:ack.checked});
-          resetPreview(); await refreshHuman(); renderRail(true);
-        },'release-not-sent');
-        release.disabled = true; ack.addEventListener('change',() => {release.disabled = !ack.checked;});
-        history.append(lab,release);
-      }
-      history.append(lazy(m('Dispatch receipt'),() => [pre({id:send.id,payload:send.payload,comment:send.remote_comment,receipts:send.receipts,events:send.events})]));
-    }
-  }
-  if (d.history.length) section.append(lazy(m('Prior draft revisions'),() => [pre(d.history)]));
-}
 function renderHuman(n,t) {
   n.append(el('h2',t?.candidates.length ? m('Finding') : m('Human review'),'rail-heading'));
   if (!t) {
@@ -1145,13 +914,13 @@ function renderHuman(n,t) {
   const c = candidate(), mock = owns(state.human);
   if (c) {
     const d = currentDraft();
-    const blocked = candidateBlock(t, c.id, c.change.side, d);
+    const blocked = candidateBlock(state.human, t, c.id, c.change.side, d);
     const inference = c.inference === 'CONDITIONAL_INFERENCE' ? m('Conditional') : c.inference || m('Unknown candidate type');
     const meta = el('p'); meta.append(tag(inference,'warn')); n.append(meta);
     if (t.candidates.length > 1) {
       const list = block(n,m('Candidates'));
       for (const row of t.candidates) {
-        const item = card(row.title, m('{anchor} · {status}', {anchor: row.change.path + ':' + row.change.line, status: diagnostic(candidateStatus(t,row))}),
+        const item = card(row.title, m('{anchor} · {status}', {anchor: row.change.path + ':' + row.change.line, status: diagnostic(candidateStatus(state.human, t,row))}),
           event => pickCandidate(t,row,event.currentTarget), 'pick-' + row.id);
         list.append(currentAttr(item, row === c));
       }
@@ -1177,7 +946,7 @@ function renderHuman(n,t) {
     }), 'rail-sub'),
       lazy(m('Exact citation data'),() => [pre(c.citations)]));
     renderDisposition(n, t, c);
-    const comment = (!d || blocked) && block(n, m('Comment state'), tag(diagnostic(candidateStatus(t, c)), blocked ? 'warn' : ''));
+    const comment = (!d || blocked) && block(n, m('Comment state'), tag(diagnostic(candidateStatus(state.human, t, c)), blocked ? 'warn' : ''));
     if (blocked) {
       comment.append(el('p',blocked.reason,'rail-sub'));
     }
@@ -1187,7 +956,12 @@ function renderHuman(n,t) {
         await human('draft',{review_id:state.human.id,task_id:t.id,candidate_id:c.id});
         await refreshHuman(); renderRail(true); locate(t,c.change,true,origin);
       }), 'select-candidate'));
-    } else if (d && (!blocked || d.intent_id)) renderEditor(n,t,c,d);
+    } else if (d && (!blocked || d.intent_id)) {
+      renderCommentEditor(n, d, {
+        review: state.human, ctx: current(), session: state, act, notify,
+        reload: refreshHuman, render: () => renderRail(true),
+      });
+    }
   } else n.append(el('p',t.reason ? m('{message} {reason}', {message: m('This frozen version has no supported candidate.'), reason: diagnostic(t.reason)}) : m('This frozen version has no supported candidate.'), 'rail-sub'));
   renderRereview(n,t);
   const live = block(n,'',el('p',liveReview(state.human) ? m('Live GitHub writes run only in the attended command-line lane for allowlisted repositories.') : m('Live GitHub publishing is disabled.'),'rail-sub'));
@@ -1209,19 +983,6 @@ function humanVersionButtons() {
   return state.human.tasks.map(task =>
     button(m('Open {version}', {version: label(task)}), () => selectHumanVersion(task.id), 'button saved-row'));
 }
-function otherComments(parent, rows, acknowledged) {
-  if (!rows?.length) return;
-  const box = el('div','','callout warn'); box.id = 'other-comments';
-  box.append(el('h3',m('Same line already has comments from other accounts')));
-  for (const row of rows) {
-    const p = el('p','','');
-    p.append(tag(row.label,'warn'),'  ' + row.excerpt.slice(0,160) + (row.excerpt.length > 160 ? '…' : ''));
-    box.append(p);
-    if (row.html_url?.startsWith('https://github.com/')) box.append(link(m('Comment {id} by {author}', {id: row.id, author: row.login}),row.html_url,'mono'));
-  }
-  box.append(el('p',acknowledged ? m('Seen by the confirmer before sending: {ids}', {ids: acknowledged.join(', ')}) : m('The confirmer decides whether to send anyway.'),'rail-sub'));
-  parent.append(box);
-}
 function renderRereview(n,t) {
   const check = (state.human?.rereviews || []).find(x => x.new_task_id === t.id);
   if (!check) return;
@@ -1242,7 +1003,7 @@ function renderRereview(n,t) {
   if (!check.comments.length) section.append(el('p',m('No sent comment to check.'),'rail-sub'));
   for (const row of check.candidates) {
     const d = state.human.drafts.find(x => x.task_id === t.id && x.candidate_id === row.candidate_id);
-    const status = candidateBlock(t, row.candidate_id, row.change.side, d)?.status || row.status;
+    const status = candidateBlock(state.human, t, row.candidate_id, row.change.side, d)?.status || row.status;
     const p = el('p','',''); p.append(tag(diagnostic(status),status === 'NEW' ? 'accent' : 'warn'),'  ' + name(row.change.path) + ':' + row.change.line);
     section.append(p);
   }

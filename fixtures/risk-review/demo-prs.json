@@ -816,6 +816,82 @@
       "review": {
         "dispatch-faq-link": "ACCEPTED"
       }
+    },
+    {
+      "snapshot": {
+        "schema": "mea-snapshot-v1",
+        "id": "lantern-dispatch-252",
+        "pr": {
+          "title": "缩短任务队列的轮询间隔",
+          "body": "将队列轮询从 30 秒改为 15 秒，并同步更新工作进程和部署配置。",
+          "number": 252,
+          "repository": "lantern-lab/dispatch-service",
+          "url": "https://github.com/lantern-lab/dispatch-service/pull/252"
+        },
+        "revisions": {
+          "base": "3587c41185aeaa951758d969c52f40d9e85cb65d",
+          "head": "d9a0cd28ee0f41da81b0fe0e25a3d2b729cd1a24",
+          "target_base": "3587c41185aeaa951758d969c52f40d9e85cb65d"
+        },
+        "provenance": {
+          "kind": "FROZEN_PENDING_REVIEW",
+          "captured_at": "2026-11-19T12:10:00+00:00",
+          "state_at_capture": "open",
+          "merged_at_capture": false,
+          "pending_review_version": true,
+          "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
+          "capture_sha256": "ae74e0671846fce9d8fec715689747becf0a73b73e340ef832c36eaf6ba8940d"
+        },
+        "scope": {
+          "reported_changed_files": 3,
+          "complete_listing": false,
+          "omitted_sources": [],
+          "capture": {
+            "status": "INCOMPLETE",
+            "context_selection": "SKIPPED_INCOMPLETE_CHANGE_LISTING",
+            "gap_counts": {
+              "MISSING": 1,
+              "TRUNCATED": 0,
+              "TRANSPORT": 0
+            },
+            "gaps": [
+              {
+                "kind": "MISSING",
+                "code": "FILE_LIST_INCOMPLETE",
+                "request": "files",
+                "path": null,
+                "side": null
+              }
+            ]
+          }
+        },
+        "files": [
+          {
+            "path": "config/dispatch.yml",
+            "base_path": "config/dispatch.yml",
+            "status": "modified",
+            "patch": "@@ -1,2 +1,2 @@\n dispatch:\n-  poll_interval_seconds: 30\n+  poll_interval_seconds: 15\n",
+            "sides": {
+              "base": {
+                "text": "dispatch:\n  poll_interval_seconds: 30\n",
+                "sha256": "f9a7bcf27ab35152e2c2ebadb23e80f36ac4e3bc502916702a66801e5470cd83",
+                "blob_sha": "bd85584d233dedf2ade3e6170a8823632f613af7"
+              },
+              "head": {
+                "text": "dispatch:\n  poll_interval_seconds: 15\n",
+                "sha256": "1fead78754d8858b9efe4196dabe648cdb7ab91199abd142bc3c1be292ce10d4",
+                "blob_sha": "506333f63820c2f076a2a840d4ac2e3c8dc648fd"
+              }
+            }
+          }
+        ]
+      },
+      "author": "周晨",
+      "risk": null,
+      "status": "STOPPED",
+      "risk_summary": null,
+      "findings": [],
+      "stop_reason": "冻结快照只采集到 3 个变更文件中的 1 个，无法生成审查。"
     }
   ]
 }

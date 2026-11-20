@@ -70,6 +70,29 @@ async function newPage(locale, viewport) {
   return page;
 }
 
+async function holdReviewResponse(page, url, review) {
+  // Observe JSON consumption so the test checks the UI after the response has been handled.
+  await page.evaluate(url => {
+    window.reviewResponseHandled = false;
+    const read = Response.prototype.json;
+    Response.prototype.json = async function () {
+      const data = await read.call(this);
+      if (this.url === url) {
+        Response.prototype.json = read;
+        setTimeout(() => {window.reviewResponseHandled = true;}, 0);
+      }
+      return data;
+    };
+  }, url);
+  let release;
+  const hold = new Promise(resolve => {release = resolve;});
+  await page.route(url, async route => {await hold; await route.fulfill({json: review});}, {times: 1});
+  return async () => {
+    release();
+    await expect.poll(() => page.evaluate(() => window.reviewResponseHandled)).toBe(true);
+  };
+}
+
 try {
   origin = await new Promise((resolve, reject) => {
     let stdout = '';
@@ -359,21 +382,7 @@ try {
 
   assert(!staleReview.dispositions.some(record => record.candidate_id === riskFinding.id));
   const reviewUrl = origin + reviewPath;
-  // Wait for the stale JSON to be consumed and its promise continuations to run.
-  await risk.evaluate(url => {
-    const read = Response.prototype.json;
-    Response.prototype.json = async function () {
-      const data = await read.call(this);
-      if (this.url === url) {
-        Response.prototype.json = read;
-        setTimeout(() => {window.staleReviewHandled = true;}, 0);
-      }
-      return data;
-    };
-  }, reviewUrl);
-  let releaseReview;
-  const holdReview = new Promise(resolve => {releaseReview = resolve;});
-  await risk.route(reviewUrl, async route => {await holdReview; await route.fulfill({json: staleReview});}, {times: 1});
+  const finishStaleReview = await holdReviewResponse(risk, reviewUrl, staleReview);
   const loadingReview = risk.waitForRequest(reviewUrl);
   await btn(risk, 'Human review').click();
   await loadingReview;
@@ -383,13 +392,30 @@ try {
   await btn(risk.getByRole('dialog'), 'Accept finding').click();
   const judgment = risk.locator('#review-actions .action-caption');
   await expect(judgment).toHaveText('Finding accepted');
-  releaseReview();
-  await expect.poll(() => risk.evaluate(() => window.staleReviewHandled)).toBe(true);
+  await finishStaleReview();
   await expect(judgment).toHaveText('Finding accepted');
   const latestReview = await json(api.request, reviewPath);
   assert.equal(latestReview.dispositions.find(record => record.candidate_id === riskFinding.id)?.disposition, 'ACCEPTED');
-  await risk.context().close();
   flows.push('A human-review response issued before the judgment save completes afterward and leaves the saved judgment visible.');
+
+  const finishEarlierFindingReview = await holdReviewResponse(risk, reviewUrl, latestReview);
+  const loadingEarlierFinding = risk.waitForRequest(reviewUrl);
+  await btn(risk, 'Human review').click();
+  await loadingEarlierFinding;
+  await risk.keyboard.press('Escape');
+  const nextFinding = riskTask.candidates[1];
+  await risk.locator('.finding').nth(1).click();
+  await finishEarlierFindingReview();
+  await btn(risk, 'Record judgment').click();
+  const dialog = risk.getByRole('dialog');
+  await expect(dialog).toContainText(nextFinding.title);
+  await btn(dialog, 'Dismiss finding').click();
+  await expect(risk.locator('#toast')).toHaveText('Local judgment saved · Finding dismissed');
+  const updatedReview = await json(api.request, reviewPath);
+  assert.equal(updatedReview.dispositions.find(record => record.candidate_id === riskFinding.id)?.disposition, 'ACCEPTED');
+  assert.equal(updatedReview.dispositions.find(record => record.candidate_id === nextFinding.id)?.disposition, 'IGNORED');
+  await risk.context().close();
+  flows.push('Changing findings while Human review is loading keeps the judgment dialog and saved disposition bound to the selected finding.');
 
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);

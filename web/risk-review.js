@@ -326,7 +326,7 @@ async function launchHumanReview(task, candidate) {
     if (selection === state.selection) {
       state.review = value;
       renderQueue();
-      renderActions(task, candidate, review);
+      renderActions(state.task, selectedFinding(state.task), review);
     }
   };
   const load = async read => {

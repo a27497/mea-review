@@ -361,13 +361,11 @@ try {
   assert(!riskTask.candidates.some(candidate => candidate.id === finding.id));
 
   const stoppedPage = await newPage('zh-CN', {width: 1440, height: 900});
-  await stoppedPage.goto(origin + '/?' + new URLSearchParams({record: stopped.id}));
+  await stoppedPage.goto(origin + '/?' + new URLSearchParams({record: riskId}));
   const stopBanner = stoppedPage.locator('.stop-reason');
-  await expect(stopBanner).toContainText('缺失文件 · ' + omitted);
-  await expect(stopBanner).not.toContainText(truncated);
   await stoppedPage.locator('.pr-row').filter({hasText: '#252'}).press('Enter');
   await expect(stoppedPage.locator('.title-row .status')).toHaveText('无法完成审查');
-  await expect(stopBanner).toContainText('冻结快照未记录缺失文件的名称。');
+  await expect(stopBanner).toContainText('缺失文件 · services/dispatch/worker.py, deploy/dispatch/values.yaml');
   await expect(stopBanner).toContainText('请重新采集同一冻结版本的完整变更文件列表及源码');
   await expect(stoppedPage.locator('#review-actions')).toBeHidden();
   await shot(stoppedPage, 'desktop', 'zh-risk-stopped-files');
@@ -386,8 +384,16 @@ try {
   await expect(exportJson).toHaveAttribute('href', /^\/api\/task-json\/task-/);
   await stoppedPage.keyboard.press('Escape');
   await expect(reviewDetails).toBeFocused();
+
+  const unnamed = structuredClone(snapshot);
+  unnamed.scope.capture.gaps[0].path = null;
+  const unnamedTask = await json(api.request, '/api/tasks', {snapshot: unnamed, budget: {tools: 1}});
+  await expect.poll(async () => (await json(api.request, '/api/task/' + unnamedTask.id)).status).toBe('STOPPED');
+  await stoppedPage.goto(origin + '/?' + new URLSearchParams({record: unnamedTask.id}));
+  await expect(stopBanner).toContainText('冻结快照未记录缺失文件的名称。');
+  await expect(stopBanner).not.toContainText(truncated);
   await stoppedPage.context().close();
-  flows.push('Stopped reviews show recorded missing file paths or explain their absence. Synthetic #252 keeps its stopped state and gives recapture guidance. Review details keep file browsing visible and disclose engineering data on demand.');
+  flows.push('Synthetic #252 stays stopped, names both missing files, and gives recapture guidance. An unnamed capture gap stays unknown. Review details keep file browsing visible and disclose engineering data on demand.');
 
   const riskPhone = await newPage('zh-CN', {width: 390, height: 844});
   await riskPhone.goto(origin + '/?' + new URLSearchParams({record: riskId}));

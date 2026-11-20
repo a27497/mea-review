@@ -840,7 +840,7 @@
           "merged_at_capture": false,
           "pending_review_version": true,
           "source_authentication": "NOT_INDEPENDENTLY_VERIFIED",
-          "capture_sha256": "ae74e0671846fce9d8fec715689747becf0a73b73e340ef832c36eaf6ba8940d"
+          "capture_sha256": "5c825470d2e4476f8cab71360f3ddaf1f0a5d04b45ac1e2355eeeb059a748114"
         },
         "scope": {
           "reported_changed_files": 3,
@@ -850,7 +850,7 @@
             "status": "INCOMPLETE",
             "context_selection": "SKIPPED_INCOMPLETE_CHANGE_LISTING",
             "gap_counts": {
-              "MISSING": 1,
+              "MISSING": 2,
               "TRUNCATED": 0,
               "TRANSPORT": 0
             },
@@ -859,7 +859,14 @@
                 "kind": "MISSING",
                 "code": "FILE_LIST_INCOMPLETE",
                 "request": "files",
-                "path": null,
+                "path": "services/dispatch/worker.py",
+                "side": null
+              },
+              {
+                "kind": "MISSING",
+                "code": "FILE_LIST_INCOMPLETE",
+                "request": "files",
+                "path": "deploy/dispatch/values.yaml",
                 "side": null
               }
             ]

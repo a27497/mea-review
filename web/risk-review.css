@@ -232,6 +232,8 @@ dialog:has(.full-code) { width: min(900px, calc(100% - 28px)); }
 .human-panel .exact-body, .human-panel .callout { padding: 9px; background: var(--queue); border-radius: 6px; }
 .human-panel [role="status"]:empty { display: none; }
 .stop-reason { color: var(--muted); }
+.stop-reason p { overflow-wrap: anywhere; }
+.stop-reason p:first-child { margin-top: 0; }
 .version-list, .file-list { list-style: none; padding: 0; margin: 0; }
 .version-list li, .file-list li { border-bottom: 1px solid var(--line); padding: 7px 0; }
 .file-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }

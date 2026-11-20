@@ -42,3 +42,7 @@ jobs:
       - run: npm test
       - name: Replay ReviewBench
         run: python3 -I -B benchmarks/reviewbench/verify.py --out "${RUNNER_TEMP}/reviewbench-ci"
+      - name: Install Chromium for Playwright
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Run review overview browser tests
+        run: npm run test:review-overview

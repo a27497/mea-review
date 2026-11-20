@@ -224,7 +224,23 @@ try {
       assert.equal(p.url(), versionUrl);
       await expect(language(p)).toBeFocused();
       await language(p).press('Space');
+
+      await bodyInput(p).fill('Earlier draft text submitted before the next edit.');
+      let releaseEdit;
+      const holdEdit = new Promise(resolve => {releaseEdit = resolve;});
+      const editUrl = origin + '/api/human/edit';
+      await p.route(editUrl, async route => {await holdEdit; await route.continue();}, {times: 1});
+      const editing = p.waitForRequest(editUrl);
       await btn(p, '保存草稿').press('Enter');
+      await editing;
+      await bodyInput(p).fill(body);
+      releaseEdit();
+      await expect(p.locator('#workspace')).not.toHaveAttribute('aria-busy', 'true');
+      await expect(bodyInput(p)).toHaveValue(body);
+      await expect(btn(p, '保存草稿')).toBeEnabled();
+      await expect(btn(p, '预览评论原文')).toBeDisabled();
+      await btn(p, '保存草稿').press('Enter');
+      flows.push('Text typed during a pending draft save remains editable and must be saved before exact preview.');
     }
     await expect(bodyInput(p)).toHaveValue(body);
     await expect(btn(p, '预览评论原文')).toBeEnabled();
@@ -312,6 +328,68 @@ try {
   await expect(scope(p).getByRole('button', {name: new RegExp(omitted)})).toHaveCount(0);
   await shot(p, 'phone', 'zh-stopped-capture');
   flows.push('Chinese exact confirmation, one Mock send with a lost response, read-only reconciliation after refresh, version-bound dispositions, and recorded stopped/missing/truncated evidence.');
+
+  const {review_id: riskId} = await json(api.request, '/api/human/risk-demo', {});
+  const reviewPath = '/api/human/review/' + riskId;
+  const staleReview = await json(api.request, reviewPath);
+  const riskTask = staleReview.tasks[0];
+  const riskFinding = riskTask.candidates[0];
+  assert(riskTask.candidates.length > 1);
+  assert(!riskTask.candidates.some(candidate => candidate.id === finding.id));
+  const risk = await newPage('en', {width: 1440, height: 900});
+  const invalidLink = origin + '/?' + new URLSearchParams({record: riskId, finding: finding.id});
+  const writesBeforeInvalidLink = requests.filter(r => r.method === 'POST').length;
+  await risk.goto(invalidLink);
+  await language(risk).click();
+  await expect(risk.getByRole('status').filter({hasText: 'The linked finding is unavailable in this frozen version.'})).toBeVisible();
+  await expect(risk.locator('.finding[aria-pressed="true"]')).toHaveCount(0);
+  await expect(btn(risk, 'Record judgment')).toHaveCount(0);
+  await expect(btn(risk, 'Defer')).toHaveCount(0);
+  await btn(risk, 'Human review').click();
+  await expect(risk.getByRole('dialog')).toContainText('This frozen version has no supported candidate.');
+  await expect(btn(risk, 'Record judgment')).toHaveCount(0);
+  await expect(btn(risk, 'Defer')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'POST').length, writesBeforeInvalidLink);
+  assert.equal(risk.url(), invalidLink);
+  await risk.keyboard.press('Escape');
+  await risk.locator('.finding').first().click();
+  await expect(risk.locator('.finding[aria-pressed="true"]')).toContainText(riskFinding.title);
+  await expect(btn(risk, 'Record judgment')).toBeEnabled();
+  flows.push('A finding link from another version reports the unavailable finding and blocks judgment until a finding is selected explicitly.');
+
+  assert(!staleReview.dispositions.some(record => record.candidate_id === riskFinding.id));
+  const reviewUrl = origin + reviewPath;
+  // Wait for the stale JSON to be consumed and its promise continuations to run.
+  await risk.evaluate(url => {
+    const read = Response.prototype.json;
+    Response.prototype.json = async function () {
+      const data = await read.call(this);
+      if (this.url === url) {
+        Response.prototype.json = read;
+        setTimeout(() => {window.staleReviewHandled = true;}, 0);
+      }
+      return data;
+    };
+  }, reviewUrl);
+  let releaseReview;
+  const holdReview = new Promise(resolve => {releaseReview = resolve;});
+  await risk.route(reviewUrl, async route => {await holdReview; await route.fulfill({json: staleReview});}, {times: 1});
+  const loadingReview = risk.waitForRequest(reviewUrl);
+  await btn(risk, 'Human review').click();
+  await loadingReview;
+  await expect(risk.getByRole('dialog')).toContainText('Loading workspace…');
+  await risk.keyboard.press('Escape');
+  await btn(risk, 'Record judgment').click();
+  await btn(risk.getByRole('dialog'), 'Accept finding').click();
+  const judgment = risk.locator('#review-actions .action-caption');
+  await expect(judgment).toHaveText('Finding accepted');
+  releaseReview();
+  await expect.poll(() => risk.evaluate(() => window.staleReviewHandled)).toBe(true);
+  await expect(judgment).toHaveText('Finding accepted');
+  const latestReview = await json(api.request, reviewPath);
+  assert.equal(latestReview.dispositions.find(record => record.candidate_id === riskFinding.id)?.disposition, 'ACCEPTED');
+  await risk.context().close();
+  flows.push('A human-review response issued before the judgment save completes afterward and leaves the saved judgment visible.');
 
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);

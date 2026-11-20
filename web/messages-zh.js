@@ -631,6 +631,7 @@ export const zhCN = Object.freeze({
   "This pull request could not be opened.": "暂时无法打开此 PR。",
   "Import a frozen snapshot to review its changes and evidence.": "导入冻结快照后，可查看改动、发现和证据。",
   "There are no findings ready for judgment. See the review details for what was checked.": "暂无可确认的发现。可查看已核对的范围。",
+  "The linked finding is unavailable in this frozen version.": "此冻结版本中没有链接指定的发现项。",
   "Findings will appear when the investigation finishes.": "调查完成后会更新发现。",
   "Review status could not be refreshed. Try reloading.": "暂时无法刷新审查状态，请重新加载。",
   "Impact": "影响",

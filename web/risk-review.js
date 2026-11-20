@@ -20,6 +20,7 @@ const judgments = {ACCEPTED: m('Finding accepted'), IGNORED: m('Finding dismisse
 
 const state = {
   rows: [], tasks: new Map(), reviews: new Map(), linkedReviews: new Map(), row: null, task: null, review: null,
+  judgmentSaves: new Map(),
   finding: null, queueOpen: false, filter: 'all', expanded: false, stage: null,
   listError: false, openError: false, loading: true, pending: false, selection: 0,
 };
@@ -100,7 +101,8 @@ function focusPageTitle(id) {
   $(id)?.focus({preventScroll: true});
 }
 function workbench(params = {}) {
-  const {row, task, finding} = state;
+  const {row, task} = state;
+  const finding = selectedFinding(task)?.id ?? state.finding;
   const returnParams = row ? {
     'risk-record': row.id,
     ...(task && task.id !== row.taskId && {'risk-revision': task.id}),
@@ -150,6 +152,9 @@ const location = ref => ref.path + (ref.start ? ':' + ref.start + (ref.end > ref
 const editorials = (task, candidate) => demo(task)?.findings[candidate?.id];
 const findingAnchor = (task, candidate) => editorials(task, candidate)?.anchor
   || {...candidate.change, start: candidate.change.line, end: candidate.change.line};
+function selectedFinding(task) {
+  return state.finding == null ? task?.candidates[0] : task?.candidates.find(c => c.id === state.finding);
+}
 
 function showQueue(open, focus = false) {
   state.queueOpen = open;
@@ -241,7 +246,7 @@ function dialogVersions(task, review) {
 }
 function dialogFiles(task) {
   const list = el('ul', '', 'file-list');
-  const candidate = task.candidates.find(c => c.id === state.finding);
+  const candidate = selectedFinding(task);
   for (const file of task.view.files) {
     const li = el('li');
     li.append(el('code', file.path));
@@ -324,7 +329,13 @@ async function launchHumanReview(task, candidate) {
       renderActions(task, candidate, review);
     }
   };
-  const reload = async () => remember(await getReview(review.id));
+  const load = async read => {
+    const lastSave = state.judgmentSaves.get(row.id);
+    const value = await read();
+    if (lastSave === state.judgmentSaves.get(row.id)) remember(value);
+    else review = state.reviews.get(row.id);
+  };
+  const reload = () => load(() => getReview(review.id));
   const act = async (fn, {reloadOnError = false} = {}) => {
     if (busy || !isOpen()) return;
     busy = true;
@@ -395,7 +406,7 @@ async function launchHumanReview(task, candidate) {
     }
   };
   try {
-    remember(savedReview ? await getReview(savedReview.id) : await human('create', {task_id: task.id}));
+    await load(() => savedReview ? getReview(savedReview.id) : human('create', {task_id: task.id}));
     render();
   } catch {
     if (isOpen()) panel.replaceChildren(el('p', m('Human review could not be opened. Try again.')));
@@ -463,7 +474,7 @@ function renderFindings(task, candidate) {
   const cards = el('div', '', 'finding-list');
   for (const finding of task.candidates) {
     const control = btn('', () => {
-      if (state.finding === finding.id) return;
+      if (finding === candidate) return;
       state.finding = finding.id;
       state.expanded = false;
       history.replaceState({}, '', urlFor(state.row, task.id, finding.id));
@@ -715,8 +726,8 @@ function notes(task, candidate) {
 
 async function saveJudgment(value, controls = []) {
   if (state.pending) return;
-  const {task, row, review, finding: candidateId} = state;
-  const candidate = task.candidates.find(candidate => candidate.id === candidateId);
+  const {task, row, review} = state;
+  const candidate = selectedFinding(task);
   if (!candidate || !canJudge(task, candidate, review)) return;
   const humanOpen = $('risk-dialog').open && dialogOrigin?.id === 'human-review';
   state.pending = true;
@@ -724,9 +735,10 @@ async function saveJudgment(value, controls = []) {
   try {
     const active = review || await request('/api/human/create', {task_id: task.id});
     const record = await request('/api/human/disposition', {
-      review_id: active.id, task_id: task.id, candidate_id: candidateId, disposition: value,
+      review_id: active.id, task_id: task.id, candidate_id: candidate.id, disposition: value,
     });
     active.dispositions = [...active.dispositions.filter(item => item.id !== record.id), record];
+    state.judgmentSaves.set(row.id, record);
     state.reviews.set(active.id, active);
     state.reviews.set(row.id, active);
     if (state.row === row && state.task?.id === task.id) {
@@ -806,13 +818,16 @@ function renderReview() {
     return;
   }
   setTitle(m('{title} · MEA Review', {title: task.pr.title}));
-  const candidate = task.candidates.find(c => c.id === state.finding) || task.candidates[0];
-  state.finding = candidate?.id;
+  const candidate = selectedFinding(task);
   root.replaceChildren(header(task, review));
   if (candidate) {
     const detail = el('div', '', 'detail-workspace');
     detail.append(renderCode(task, candidate), renderEvidence(task, candidate));
     root.append(stageNav(), renderFindings(task, candidate), detail, notes(task, candidate));
+  } else if (state.finding != null) {
+    const notice = el('p', m('The linked finding is unavailable in this frozen version.'), 'empty-detail');
+    notice.setAttribute('role', 'status');
+    root.append(renderFindings(task), notice);
   } else {
     root.append(sectionHead('finding-title', m('Review findings'), 0), el('p', final.has(task.status) ?
       m('There are no findings ready for judgment. See the review details for what was checked.') :

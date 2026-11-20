@@ -46,8 +46,13 @@ function renderCommentEditor(n, d, {review, ctx, session, act, reload, render, n
   if (editable) {
     const commands = el('div','','actions');
     const save = action(m('Save draft'),async () => {
-      const saved = await human('edit',{draft_id:d.id,body:body.value,anchor:d.anchor});
-      ctx.editorKey = editorKey(saved); ctx.editorText = saved.body; resetPreview(session);
+      const submitted = body.value;
+      const saved = await human('edit',{draft_id:d.id,body:submitted,anchor:d.anchor});
+      if (ctx.editorKey === editorKey(d)) {
+        ctx.editorKey = editorKey(saved);
+        if (ctx.editorText === submitted) ctx.editorText = saved.body;
+        resetPreview(session);
+      }
       await reload(); render(); notify(m('Draft saved.'));
     },'save-draft');
     const previewButton = action(m('Preview exact comment'),async () => {

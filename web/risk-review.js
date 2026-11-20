@@ -1,7 +1,7 @@
 import {diagnostic, m, mountLanguage, setAttr, setText, setTitle} from './i18n.js';
 import {patches, sourceLines} from './frozen-code.js';
 import {candidateBlock, renderCommentEditor, resetPreview} from './comment-editor.js';
-import {actionError, evidenceCoverage, exportsFor, fields, human, request, toolTrace} from './review-components.js';
+import {actionError, detail, evidenceCoverage, exportsFor, fields, human, request, toolTrace} from './review-components.js';
 
 const $ = id => document.getElementById(id);
 const mobile = matchMedia('(max-width: 760px)');
@@ -147,6 +147,23 @@ function stopReason(task) {
   if (demo(task)) return task.events.findLast(event => event.kind === 'stopped')?.summary;
   return diagnostic(task.reason);
 }
+function stoppedBanner(task) {
+  const banner = el('div', '', 'risk-banner neutral stop-reason');
+  const copy = el('div');
+  copy.append(el('p', stopReason(task)));
+  const coverage = task.view.coverage;
+  if (!coverage.complete_listing) {
+    const missing = (coverage.capture?.gaps || []).filter(gap => gap.kind === 'MISSING' && gap.request === 'files');
+    const paths = [...new Set(missing.map(gap => gap.path).filter(Boolean))];
+    if (paths.length) copy.append(el('p', m('Missing files · {paths}', {paths: paths.join(', ')})));
+    if (!paths.length || missing.some(gap => !gap.path)) {
+      copy.append(el('p', m('The frozen snapshot does not record the missing file names.')));
+    }
+    copy.append(el('p', m('Capture the complete changed-file list and source for this frozen version, then import the new snapshot to review it.')));
+  }
+  banner.append(copy);
+  return banner;
+}
 const fileCount = task => task?.view?.coverage.reported_changed_files;
 const location = ref => ref.path + (ref.start ? ':' + ref.start + (ref.end > ref.start ? '–' + ref.end : '') : '');
 const editorials = (task, candidate) => demo(task)?.findings[candidate?.id];
@@ -276,14 +293,17 @@ function dialogDetails(task) {
       : btn(label, () => showEvidence(task, location), 'text-button citation-button');
   };
   const controls = el('div', '', 'dialog-buttons');
-  controls.append(btn(m('View files ↗'), () => dialogFiles(task), 'secondary'), exportsFor(task));
+  controls.append(btn(m('View files ↗'), () => dialogFiles(task), 'secondary'));
   showDialog(m('Review details'), fields([
-    [m('Before change'), view.revisions.base], [m('After change'), view.revisions.head],
     [m('Collected changed files'), view.files.filter(f => f.status !== 'context').length],
-    [m('Candidates'), task.candidates.length], [m('Model requests'), (task.requests || []).length],
+    [m('Candidates'), task.candidates.length],
   ]), ...(status === 'STOPPED' ? [el('p', stopReason(task))]
     : task.reason && !demo(task) ? [el('p', diagnostic(task.reason))] : []),
-  evidenceCoverage(task), controls, toolTrace(task, citation, m('Tool investigation')));
+  evidenceCoverage(task), controls, toolTrace(task, citation, m('Tool investigation')),
+  detail(m('Technical details'), fields([
+    [m('Before change'), view.revisions.base], [m('After change'), view.revisions.head],
+    [m('Model requests'), (task.requests || []).length],
+  ]), exportsFor(task)));
 }
 function prereviewTools(task, review, candidate) {
   const controls = el('div', '', 'review-tools');
@@ -437,7 +457,7 @@ function header(task, review) {
   const risk = authoredData?.risk;
   const highest = task.candidates[0];
   if (status === 'STOPPED') {
-    result.append(el('p', stopReason(task), 'risk-banner neutral stop-reason'));
+    result.append(stoppedBanner(task));
   } else if (highest || status === 'NEEDS_RECHECK') {
     const tone = risk || (status === 'NEEDS_RECHECK' ? 'MEDIUM' : 'NEUTRAL');
     const banner = el('section', '', 'risk-banner ' + tone.toLowerCase());
@@ -521,7 +541,7 @@ function sourceFor(task, ref) {
 }
 function listing(rows, task, file, ref, {diff = false, selected} = {}) {
   const body = el('div', '', diff ? 'source-lines diff-lines' : 'source-lines');
-  setAttr(body, 'aria-label', referenceLocation(ref));
+  setAttr(body, 'aria-label', referenceLocation(ref, diff));
   body.tabIndex = 0;
   body.setAttribute('role', 'region');
   for (const row of rows) {
@@ -540,7 +560,7 @@ function listing(rows, task, file, ref, {diff = false, selected} = {}) {
         const path = side === 'base' ? file.base_path : file.path;
         setAttr(number, 'title', referenceLocation({
           path, start: row[side], end: row[side], side, revision: task.view.revisions[side],
-        }));
+        }, diff));
         setAttr(number, 'aria-label', m('{side}, line {line}', {side: sides[side], line: row[side]}));
         if (selected?.side === side && row[side] === selected.line) {
           node.dataset.located = '';
@@ -571,8 +591,9 @@ function snippetRows(file, lines, ref, expanded) {
   }
   return lines.slice(first - 1, last).map((text, index) => ({text, [ref.side]: first + index}));
 }
-function referenceLocation(ref) {
-  return m('{location} · {side} · {revision}', {location: location(ref), side: sides[ref.side], revision: ref.revision});
+function referenceLocation(ref, abbreviateRevision = false) {
+  return m('{location} · {side} · {revision}', {location: location(ref), side: sides[ref.side],
+    revision: abbreviateRevision ? short(ref.revision) : ref.revision});
 }
 function dialogCode(task, file, ref, {source, back} = {}) {
   const title = m(source ? 'Frozen source' : 'Unified diff');
@@ -589,10 +610,10 @@ function dialogCode(task, file, ref, {source, back} = {}) {
     : sideRef(source || 'head');
   const body = el('div', '', 'full-code');
   if (back) body.append(btn(m('Back to files'), back, 'text-button'));
-  for (const side of source ? [source] : ['base', 'head']) {
-    body.append(el('p', referenceLocation(sideRef(side)), 'dialog-anchor'));
-  }
-  if (selected) body.append(el('p', referenceLocation(anchor), 'dialog-anchor'));
+  const refs = (source ? [source] : ['base', 'head']).map(sideRef);
+  if (selected) refs.push(anchor);
+  const caption = (ref, abbreviated) => el('p', referenceLocation(ref, abbreviated), 'dialog-anchor');
+  body.append(...refs.map(ref => caption(ref, !source)));
   const hasLine = !selected || rows.some(row => row[selected.side] === selected.line);
   if (!binding || !hasLine) {
     body.append(el('p', m(binding ? 'The referenced lines were not collected.' :
@@ -604,6 +625,7 @@ function dialogCode(task, file, ref, {source, back} = {}) {
   } else {
     body.append(el('p', m(source ? 'No text is available for this side.' : 'No unified diff was collected for this file.')));
   }
+  if (!source) body.append(detail(m('Technical details'), ...refs.map(ref => caption(ref, false))));
   showDialog(title, body);
   body.querySelector('[data-located]')?.scrollIntoView({block: 'nearest', inline: 'start'});
 }

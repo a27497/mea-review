@@ -219,6 +219,7 @@ try {
   await risk.goto(base + '/?record=' + encodeURIComponent(refutedId));
   await risk.getByRole('button', {name: 'Review details', exact: true}).click();
   const reviewDetails = risk.getByRole('dialog', {name: 'Review details'});
+  await reviewDetails.getByText('Technical details', {exact: true}).click();
   await expect(reviewDetails.getByText('Model requests', {exact: true}).locator('+ dd')).toHaveText('0');
   await risk.close();
   checks.push('The risk page opens review details with zero model requests for a saved task without a requests field.');

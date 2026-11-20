@@ -7,7 +7,8 @@
     "start": "python3 -B -m mea serve",
     "test": "python3 -B -m unittest discover -s tests -v",
     "test:e2e": "node scripts/offline-browser.mjs",
-    "test:review-v3": "node scripts/review-v3-browser.mjs"
+    "test:review-v3": "node scripts/review-v3-browser.mjs",
+    "test:review-overview": "node scripts/review-overview-browser.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

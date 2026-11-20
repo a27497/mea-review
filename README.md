@@ -38,10 +38,10 @@ From a clean clone with Docker and Compose installed:
 docker compose up --build
 ```
 
-Open [the local workbench](http://127.0.0.1:8810), then choose **Demo guide**. The default workbench uses synthetic frozen snapshots, deterministic investigations and simulated GitHub. It needs no credentials. [Container settings](compose.yaml)
+Open [the local workbench](http://127.0.0.1:8810). The **PR Inbox** lists saved investigations and human reviews. Select a PR to see its findings, frozen code and evidence. Open the full diff, file list, **审查详情** (Review details) or **人工审查** (Human review) without leaving the review page. The interface defaults to Simplified Chinese. Use the header language control to switch to English. Choose **导入快照** (Import snapshot) to open the classic task controls or **查看演示** (Open local demo) on an empty workspace to load five synthetic PRs. The [original workbench](http://127.0.0.1:8810/workbench) offers deterministic investigations and simulated GitHub under **Demo guide**. [Container settings](compose.yaml)
 
 - **Completed** opens an investigation. Expand the tool trace and select a citation to see its original side, revision and line.
-- **Human review** opens a Mock candidate. Review its evidence, edit the draft, preview and confirm the exact comment, then choose **Send to Mock**. Use **Reconcile read-only** if an outcome is uncertain.
+- **Human review** opens a Mock candidate. Inspect its frozen evidence and save a local judgment. To post a Mock comment, create a draft, preview and confirm the exact comment, then choose **Send to Mock**. Use **Reconcile read-only** if an outcome is uncertain.
 - **Re-review** compares frozen heads and shows renamed files, moved lines and outdated anchors.
 
 Compose stores drafts and tasks in temporary container storage. Use `docker compose down` when finished. For local persistence, run [the Python workbench](mea/__main__.py) with `python3 -B -m mea serve --task-dir WORKSPACE_DIR`. Open **Import & task controls** to load a collected snapshot.
@@ -99,6 +99,7 @@ npm test
 node scripts/mcp-roundtrip.mjs
 npm run test:e2e
 npm run test:review-v3
+npm run test:review-overview
 python3 -I -B benchmarks/reviewbench/verify.py --out artifacts/reviewbench-offline-1
 ```
 

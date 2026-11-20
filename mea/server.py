@@ -2,6 +2,7 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 from .contract import MAX_BYTES, decode, validate
 from .human_review import api as human_api
 from .human_review.service import Service
@@ -43,16 +44,27 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return self.send(403, {'error': 'LOOPBACK_ORIGIN_REQUIRED'})
         static = {
-            '/': ('review-v3.html', 'text/html'),
+            '/': ('risk-review.html', 'text/html'),
+            '/workbench': ('review-v3.html', 'text/html'),
+            '/frozen-code.js': ('frozen-code.js', 'text/javascript'),
+            '/review-components.js': ('review-components.js', 'text/javascript'),
+            '/comment-editor.js': ('comment-editor.js', 'text/javascript'),
+            '/risk-review.js': ('risk-review.js', 'text/javascript'),
+            '/risk-review.css': ('risk-review.css', 'text/css'),
             '/review-v3.js': ('review-v3.js', 'text/javascript'),
             '/review-v3.css': ('review-v3.css', 'text/css'),
             '/review-font/inter.woff2': ('review-font/inter.woff2', 'font/woff2'),
             '/review-font/plex-mono.woff2': ('review-font/plex-mono.woff2', 'font/woff2'),
             '/classic': ('index.html', 'text/html'),
+            '/i18n.js': ('i18n.js', 'text/javascript'),
+            '/messages-zh.js': ('messages-zh.js', 'text/javascript'),
             '/app.js': ('app.js', 'text/javascript'),
             '/style.css': ('style.css', 'text/css'),
         }
-        route = self.path.partition('?')[0]
+        route, _, query = self.path.partition('?')
+        # Keep previously shared workbench links and their pinned anchors valid.
+        if route == '/' and parse_qs(query).keys() & {'case', 'task', 'review', 'comparison'}:
+            route = '/workbench'
         if route in static:
             filename, kind = static[route]
             return self.send(200, (WEB / filename).read_bytes(), kind)
@@ -140,14 +152,19 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200, tasks.public(task))
 
 
-def serve(port=8810, task_dir=None, bind='127.0.0.1'):
+def serve(port=8810, task_dir=None, bind='127.0.0.1', *, round3_demo=False):
     if bind not in ('127.0.0.1', '0.0.0.0'):
         raise ValueError('BIND_ADDRESS')
+    if round3_demo and (task_dir is None or bind != '127.0.0.1'):
+        raise ValueError('DEMO_REQUIRES_LOCAL_TASK_DIR')
     with ThreadingHTTPServer((bind, port), Handler) as server:
         server.investigations = tasks.Manager(task_dir)
         try:
             server.human_reviews = Service(server.investigations.store)
             server.human_reviews.recover()
+            if round3_demo:
+                from .human_review.risk_demo import seed
+                seed(server.human_reviews)
             print(f'MEA OFFLINE http://127.0.0.1:{server.server_port}', flush=True)
             server.serve_forever()
         except KeyboardInterrupt:

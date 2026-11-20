@@ -14,7 +14,7 @@ def ensure(store):
 
 
 def get(db,identifier,kind=None):
-    if not isinstance(identifier,str) or not re.fullmatch('(review|draft|send|mock)-[0-9a-f]{64}',identifier):raise ValueError('REVIEW_RECORD_ID')
+    if not isinstance(identifier,str) or not re.fullmatch('(review|draft|send|mock|disposition)-[0-9a-f]{64}',identifier):raise ValueError('REVIEW_RECORD_ID')
     row=db.execute('select kind,doc from human_records where id=?',(identifier,)).fetchone()
     if not row or (kind and row[0]!=kind):raise ValueError('REVIEW_RECORD_NOT_FOUND')
     value=json.loads(row[1])

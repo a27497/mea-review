@@ -78,6 +78,8 @@ For clients that launch outside the checkout, use the following stdio configurat
 
 Use only a snapshot the connected client is authorized to receive. MCP exposes frozen evidence to that client. The server has no model, confirmation or writeback tools. The [official SDK client check](scripts/mcp-roundtrip.mjs) connects, lists tools and makes calls against the synthetic fixture. [Claude Code setup reference](https://code.claude.com/docs/en/mcp)
 
+The frozen-review Skill's offline tests run under `npm test` with a synthetic snapshot and a scripted reviewer. The operator compares supplied session IDs. Identity authentication would require a separate control. Live client generation, host filesystem and network isolation, and forced live client shutdown are `NOT_RUN`. [Frozen-review Skill](.agents/skills/mea-frozen-review/SKILL.md)
+
 ## Optional real provider and GitHub CLI
 
 These are separate, attended CLI workflows with explicit credentials and authorization.

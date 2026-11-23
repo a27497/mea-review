@@ -1,0 +1,969 @@
+{
+  "arm_summaries": {
+    "agent": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 47,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 47
+      },
+      "completed_zero": 5,
+      "completion_rate": 1.0,
+      "completion_tokens": 14220,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 3.5635635,
+      "p95_seconds": 5.743138,
+      "peak_nano": 53357520,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 47,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 47
+      },
+      "posts": 48,
+      "prompt_tokens": 151084,
+      "raw": 58,
+      "scheduled_nano": 53357520,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 47,
+      "unresolved_nano": 0,
+      "valid_anchors": 47,
+      "validation_rejections": 11
+    },
+    "direct": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 69,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 69
+      },
+      "completed_zero": 2,
+      "completion_rate": 1.0,
+      "completion_tokens": 9232,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 1.967891,
+      "p95_seconds": 4.509379,
+      "peak_nano": 23966400,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 69,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 69
+      },
+      "posts": 24,
+      "prompt_tokens": 42960,
+      "raw": 69,
+      "scheduled_nano": 23966400,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 69,
+      "unresolved_nano": 0,
+      "valid_anchors": 69,
+      "validation_rejections": 0
+    },
+    "static": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 0,
+        "precision": null,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 0
+      },
+      "completed_zero": 24,
+      "completion_rate": 1.0,
+      "completion_tokens": 0,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 0.0220625,
+      "p95_seconds": 0.096253,
+      "peak_nano": 0,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 0,
+        "precision": null,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 0
+      },
+      "posts": 0,
+      "prompt_tokens": 0,
+      "raw": 0,
+      "scheduled_nano": 0,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 0,
+      "unresolved_nano": 0,
+      "valid_anchors": 0,
+      "validation_rejections": 0
+    }
+  },
+  "bootstrap_method": {
+    "measure": "micro F1 difference",
+    "resamples": 10000,
+    "seed": 20261120,
+    "strata": "repository"
+  },
+  "cash": {
+    "cumulative_peak_nano": 110683488,
+    "holdout_peak_nano": 77323920,
+    "invoice": "NOT_RECONCILED",
+    "pending_nano": 0
+  },
+  "complete_pair_scores": {
+    "agent": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 47,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 47
+      },
+      "completed_zero": 5,
+      "completion_rate": 1.0,
+      "completion_tokens": 14220,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 3.5635635,
+      "p95_seconds": 5.743138,
+      "peak_nano": 53357520,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 47,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 47
+      },
+      "posts": 48,
+      "prompt_tokens": 151084,
+      "raw": 58,
+      "scheduled_nano": 53357520,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 47,
+      "unresolved_nano": 0,
+      "valid_anchors": 47,
+      "validation_rejections": 11
+    },
+    "direct": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 69,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 69
+      },
+      "completed_zero": 2,
+      "completion_rate": 1.0,
+      "completion_tokens": 9232,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 1.967891,
+      "p95_seconds": 4.509379,
+      "peak_nano": 23966400,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 69,
+        "precision": 0.0,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 69
+      },
+      "posts": 24,
+      "prompt_tokens": 42960,
+      "raw": 69,
+      "scheduled_nano": 23966400,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 69,
+      "unresolved_nano": 0,
+      "valid_anchors": 69,
+      "validation_rejections": 0
+    },
+    "static": {
+      "completed": 24,
+      "completed_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 0,
+        "precision": null,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 0
+      },
+      "completed_zero": 24,
+      "completion_rate": 1.0,
+      "completion_tokens": 0,
+      "confirmed_false": 0,
+      "duplicates": 0,
+      "p50_seconds": 0.0220625,
+      "p95_seconds": 0.096253,
+      "peak_nano": 0,
+      "planned": 24,
+      "planned_micro": {
+        "f1": 0.0,
+        "fn": 32,
+        "fp": 0,
+        "precision": null,
+        "recall": 0.0,
+        "tp": 0,
+        "undetermined_in_precision_denominator": 0
+      },
+      "posts": 0,
+      "prompt_tokens": 0,
+      "raw": 0,
+      "scheduled_nano": 0,
+      "statuses": {
+        "COMPLETED": 24,
+        "FAILED": 0,
+        "LIMITED": 0,
+        "NOT_RUN": 0
+      },
+      "true_extra": 0,
+      "unresolved": 0,
+      "unresolved_nano": 0,
+      "valid_anchors": 0,
+      "validation_rejections": 0
+    }
+  },
+  "completed_pairs": 24,
+  "controls": {
+    "agent": {
+      "completed": 4,
+      "false_positive_confirmed": 0,
+      "prs": 4,
+      "prs_with_candidates": 1,
+      "raw": 4
+    },
+    "direct": {
+      "completed": 4,
+      "false_positive_confirmed": 0,
+      "prs": 4,
+      "prs_with_candidates": 2,
+      "raw": 7
+    },
+    "static": {
+      "completed": 4,
+      "false_positive_confirmed": 0,
+      "prs": 4,
+      "prs_with_candidates": 0,
+      "raw": 0
+    }
+  },
+  "dev_retest": {
+    "completed_cells": 12,
+    "completed_pairs": 4,
+    "planned_cells": 12,
+    "provider_requests": 12
+  },
+  "freeze": {
+    "ci": "https://github.com/a27497/mea-review/actions/runs/45135955573",
+    "head": "33c07d7292f5ed7bc28d3ea6ede29780cc917d31",
+    "manifest_sha256": "c7caa3c61a60acea9c657f20e5fd6eeeeb052347333f5dedd6fa73dcb40bd509",
+    "pr": "https://github.com/a27497/mea-review/pull/16"
+  },
+  "holdout_gold": 32,
+  "holdout_model_requests": 72,
+  "holdout_prs": 24,
+  "human_review": {
+    "blind_candidates": 116,
+    "received": 0,
+    "required": 2,
+    "unresolved": 116
+  },
+  "leak_audit": {
+    "detected_leaks": 0,
+    "model_requests": 72,
+    "tool_results": 48
+  },
+  "paired_intervals": {
+    "agent_minus_direct": {
+      "complete": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      },
+      "full": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      }
+    },
+    "agent_minus_static": {
+      "complete": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      },
+      "full": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      }
+    },
+    "direct_minus_static": {
+      "complete": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      },
+      "full": {
+        "lower": 0.0,
+        "point": 0.0,
+        "replicates": 10000,
+        "unscorable": 0,
+        "upper": 0.0
+      }
+    }
+  },
+  "per_repository": {
+    "colinhacks/zod": {
+      "agent": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 13,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 13
+        },
+        "completed_zero": 0,
+        "completion_rate": 1.0,
+        "completion_tokens": 4464,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 4.234695,
+        "p95_seconds": 5.863844,
+        "peak_nano": 18376980,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 13,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 13
+        },
+        "posts": 12,
+        "prompt_tokens": 50927,
+        "raw": 20,
+        "scheduled_nano": 18376980,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 13,
+        "unresolved_nano": 0,
+        "valid_anchors": 13,
+        "validation_rejections": 7
+      },
+      "direct": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 25,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 25
+        },
+        "completed_zero": 0,
+        "completion_rate": 1.0,
+        "completion_tokens": 3402,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 2.6595085000000003,
+        "p95_seconds": 4.509379,
+        "peak_nano": 9447900,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 25,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 25
+        },
+        "posts": 6,
+        "prompt_tokens": 17885,
+        "raw": 25,
+        "scheduled_nano": 9447900,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 25,
+        "unresolved_nano": 0,
+        "valid_anchors": 25,
+        "validation_rejections": 0
+      },
+      "static": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "completed_zero": 6,
+        "completion_rate": 1.0,
+        "completion_tokens": 0,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 0.018806,
+        "p95_seconds": 0.079661,
+        "peak_nano": 0,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "posts": 0,
+        "prompt_tokens": 0,
+        "raw": 0,
+        "scheduled_nano": 0,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 0,
+        "unresolved_nano": 0,
+        "valid_anchors": 0,
+        "validation_rejections": 0
+      }
+    },
+    "graphql/graphql-js": {
+      "agent": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 14,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 14
+        },
+        "completed_zero": 1,
+        "completion_rate": 1.0,
+        "completion_tokens": 3441,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 3.265268,
+        "p95_seconds": 5.743138,
+        "peak_nano": 11145180,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 14,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 14
+        },
+        "posts": 12,
+        "prompt_tokens": 30913,
+        "raw": 16,
+        "scheduled_nano": 11145180,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 14,
+        "unresolved_nano": 0,
+        "valid_anchors": 14,
+        "validation_rejections": 2
+      },
+      "direct": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 17,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 17
+        },
+        "completed_zero": 1,
+        "completion_rate": 1.0,
+        "completion_tokens": 2063,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 1.574643,
+        "p95_seconds": 5.244295,
+        "peak_nano": 4872900,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 17,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 17
+        },
+        "posts": 6,
+        "prompt_tokens": 7991,
+        "raw": 17,
+        "scheduled_nano": 4872900,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 17,
+        "unresolved_nano": 0,
+        "valid_anchors": 17,
+        "validation_rejections": 0
+      },
+      "static": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "completed_zero": 6,
+        "completion_rate": 1.0,
+        "completion_tokens": 0,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 0.010499999999999999,
+        "p95_seconds": 0.021579,
+        "peak_nano": 0,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "posts": 0,
+        "prompt_tokens": 0,
+        "raw": 0,
+        "scheduled_nano": 0,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 0,
+        "unresolved_nano": 0,
+        "valid_anchors": 0,
+        "validation_rejections": 0
+      }
+    },
+    "joke2k/faker": {
+      "agent": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 9,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 9
+        },
+        "completed_zero": 2,
+        "completion_rate": 1.0,
+        "completion_tokens": 2959,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 3.2393254999999996,
+        "p95_seconds": 3.959143,
+        "peak_nano": 12718680,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 9,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 9
+        },
+        "posts": 12,
+        "prompt_tokens": 38086,
+        "raw": 9,
+        "scheduled_nano": 12718680,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 9,
+        "unresolved_nano": 0,
+        "valid_anchors": 9,
+        "validation_rejections": 0
+      },
+      "direct": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 14,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 14
+        },
+        "completed_zero": 0,
+        "completion_rate": 1.0,
+        "completion_tokens": 2053,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 1.8077230000000002,
+        "p95_seconds": 3.194295,
+        "peak_nano": 5551200,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 14,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 14
+        },
+        "posts": 6,
+        "prompt_tokens": 10292,
+        "raw": 14,
+        "scheduled_nano": 5551200,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 14,
+        "unresolved_nano": 0,
+        "valid_anchors": 14,
+        "validation_rejections": 0
+      },
+      "static": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "completed_zero": 6,
+        "completion_rate": 1.0,
+        "completion_tokens": 0,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 0.030292,
+        "p95_seconds": 0.071624,
+        "peak_nano": 0,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "posts": 0,
+        "prompt_tokens": 0,
+        "raw": 0,
+        "scheduled_nano": 0,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 0,
+        "unresolved_nano": 0,
+        "valid_anchors": 0,
+        "validation_rejections": 0
+      }
+    },
+    "marshmallow-code/marshmallow": {
+      "agent": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 11,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 11
+        },
+        "completed_zero": 2,
+        "completion_rate": 1.0,
+        "completion_tokens": 3356,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 3.7047385,
+        "p95_seconds": 5.297287,
+        "peak_nano": 11116680,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 11,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 11
+        },
+        "posts": 12,
+        "prompt_tokens": 31158,
+        "raw": 13,
+        "scheduled_nano": 11116680,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 11,
+        "unresolved_nano": 0,
+        "valid_anchors": 11,
+        "validation_rejections": 2
+      },
+      "direct": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 13,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 13
+        },
+        "completed_zero": 1,
+        "completion_rate": 1.0,
+        "completion_tokens": 1714,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 2.002188,
+        "p95_seconds": 2.419798,
+        "peak_nano": 4094400,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 13,
+          "precision": 0.0,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 13
+        },
+        "posts": 6,
+        "prompt_tokens": 6792,
+        "raw": 13,
+        "scheduled_nano": 4094400,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 13,
+        "unresolved_nano": 0,
+        "valid_anchors": 13,
+        "validation_rejections": 0
+      },
+      "static": {
+        "completed": 6,
+        "completed_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "completed_zero": 6,
+        "completion_rate": 1.0,
+        "completion_tokens": 0,
+        "confirmed_false": 0,
+        "duplicates": 0,
+        "p50_seconds": 0.0575175,
+        "p95_seconds": 0.124198,
+        "peak_nano": 0,
+        "planned": 6,
+        "planned_micro": {
+          "f1": 0.0,
+          "fn": 8,
+          "fp": 0,
+          "precision": null,
+          "recall": 0.0,
+          "tp": 0,
+          "undetermined_in_precision_denominator": 0
+        },
+        "posts": 0,
+        "prompt_tokens": 0,
+        "raw": 0,
+        "scheduled_nano": 0,
+        "statuses": {
+          "COMPLETED": 6,
+          "FAILED": 0,
+          "LIMITED": 0,
+          "NOT_RUN": 0
+        },
+        "true_extra": 0,
+        "unresolved": 0,
+        "unresolved_nano": 0,
+        "valid_anchors": 0,
+        "validation_rejections": 0
+      }
+    }
+  },
+  "schema": "phase10-holdout-results-v1",
+  "score_replay_sha256": "8f734fce84ec4fdabea9dafe194969de0a1342a49b3478d8c4997a7cc2a5c82e",
+  "score_status": "PROVISIONAL",
+  "status": "PARTIAL",
+  "strata_gold": {
+    "False": {
+      "gold": 24,
+      "hits": {
+        "agent": 0,
+        "direct": 0,
+        "static": 0
+      }
+    },
+    "None": {
+      "gold": 0,
+      "hits": {
+        "agent": 0,
+        "direct": 0,
+        "static": 0
+      }
+    },
+    "True": {
+      "gold": 8,
+      "hits": {
+        "agent": 0,
+        "direct": 0,
+        "static": 0
+      }
+    }
+  },
+  "technical_status": "PASS"
+}

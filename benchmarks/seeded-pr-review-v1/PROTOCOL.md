@@ -1,0 +1,19 @@
+# Phase 10 frozen holdout protocol
+
+The evaluation covers 24 pull requests and 32 independently tested ordinary behavior regressions. Four repositories contribute six pull requests each, with two single-defect cases, three double-defect cases, and one unchanged control per repository. Candidate pools were filtered and ordered with seed 20261120. The public manifest commits to the private selection, frozen trees, complete diffs, exact revisions, assertion receipts, and gold anchors through a salted SHA-256 commitment.
+
+## Review arms
+
+All arms receive the same complete initial diff. Static uses the repository's deterministic rules. Direct sends one independent JSON request with the frozen diff and anchors. Agent uses one native-tool request and one closing JSON request. Native requests may read at most two tools from the authorized snapshot. Each read is bounded by 24 lines and each projected reply by 4,000 bytes. Optional whole replies that exceed the closing window are identified by digest. Oversized full source blobs have explicit coverage gaps and a complete hunk can supply the changed-line citation. Agent candidate validation uses only visible frozen evidence. Direct keeps readable candidates with invalid evidence in its strict precision denominator.
+
+Both model arms use DeepSeek Flash, documented as DeepSeek-V4.1-Flash-1017, with thinking disabled and the same response bound. The two JSON paths accept an inert type, reason, or summary field at the document root and the single declared alias `conditional_impact` for `impact`. Coordinates, revisions, issue text, and evidence identifiers come from the actual response. Duplicate JSON keys, unknown structure, and incomplete provider responses are recorded as failures. No additional request repairs an answer.
+
+## Admission and stopping
+
+The maximum is 48 Agent requests, 24 Direct requests, and zero Static requests. The ledger reserves each possible POST at uncached peak input and full output price and retains unknown charges at their reserved amount. The batch requires the four complete Dev pairs, all source and assertion gates, the checked frozen head, and enough budget for the entire batch. An uncertain usage or cash gate halts further paid requests. All 72 planned cells retain terminal receipts.
+
+## Scoring and independent review
+
+The strict unit is an atomic issue with the same root cause, trigger and behavior as one gold issue, anchored at its frozen path, side, revision and line range. Each gold can be claimed once. Equivalent repeat issues are deduplicated. Extra valid discoveries and unresolved candidates are reported separately and count as unmatched in strict precision. Invalid visible anchors count as unmatched. Agent candidates rejected internally are reported separately. Failed cells stay in the planned denominator and their known misses contribute to false negatives. Successful cells and the shared complete triple subset have separate denominators. Precision, recall and F1 are micro-averaged. A zero denominator is recorded as undefined.
+
+Two independent human reviewers receive the same arm-blind, shuffled, hash-bound packet plus frozen source support. Reviewers record atomic verdicts, gold matches, evidence scope, and novel validity. Only agreed atomic labels are applied. Unresolved disagreements and unavailable reviews remain provisional, with review coverage and agreement reported. Timing, context gaps, valid anchors, control noise, request usage and cash are tabulated. Repository summaries and single-file versus cross-file gold hits are reported. For each pair of arms, compute the paired difference in micro F1 on planned and complete-pair cohorts. The percentile interval uses 10,000 PR-level bootstrap resamples within repository, preserving each repository's sample count and the joint arm outcomes. Use seed 20261120 and report undefined resamples. These intervals describe this cohort and configuration.
